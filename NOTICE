@@ -1,0 +1,22 @@
+LLMMarkUp
+Copyright (C) 2026 LLMMarkUp contributors
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, version 3 of the License (AGPL-3.0-only).
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See LICENSE for the full license text.
+
+Corresponding source and build instructions:
+https://github.com/ai-v5/LLMMarkUp
+
+Third-party components retain their own licenses and copyright notices.
+The build generates dist/THIRD_PARTY_NOTICES.txt from the actual bundled
+libraries. Electron and Chromium notices accompany the desktop runtime.
+Bundled KaTeX font binaries retain SIL Open Font License 1.1; see
+licenses/KaTeX-FONTS-OFL.txt for their notices and the complete font license.
+The project icon was created with an image-generation tool and refined for
+this application; reference screenshots and third-party brand logos are
+not included in the repository or application.
