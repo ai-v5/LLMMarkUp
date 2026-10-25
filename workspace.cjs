@@ -123,13 +123,78 @@ class Workspace {
     }
   }
 
-  async create(name) {
+  async create(name, parent = '') {
     if (!validName(name) || !isMarkdown(name)) {
       throw failure('NAME', '请输入普通文件名，以 .md 或 .markdown 结尾，不含目录或特殊字符。');
     }
-    await this.resolve();
-    await fs.writeFile(path.join(this.root, name), '', { flag: 'wx' });
-    return this.read(name);
+    const directory = await this.resolve(parent);
+    await fs.writeFile(path.join(directory, name), '', { flag: 'wx' });
+    return this.read(parent ? `${parent}/${name}` : name);
+  }
+
+  async directoryId(absolute) {
+    if (!this.root || typeof absolute !== 'string' || !path.isAbsolute(absolute)) throw failure('PATH', '目录无效。');
+    const relative = path.relative(this.root, await fs.realpath(absolute));
+    if (path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) {
+      throw failure('PATH', '只能移动到当前工作目录内的文件夹。');
+    }
+    let current = path.resolve(absolute);
+    while (path.relative(this.root, await fs.realpath(current)) !== '') {
+      if ((await fs.lstat(current)).isSymbolicLink()) throw failure('LINK', '暂不打开符号链接或目录联接。');
+      const parent = path.dirname(current);
+      if (parent === current) throw failure('PATH', '目录无效。');
+      current = parent;
+    }
+    const id = relative.split(path.sep).join('/');
+    if (!(await fs.stat(await this.resolve(id))).isDirectory()) throw failure('PATH', '请选择文件夹。');
+    return id;
+  }
+
+  async checkedFile(id, version) {
+    const target = await this.resolve(id, true);
+    if (this.opened.get(id)?.version !== version || await this.changed(id, version)) {
+      throw failure('CONFLICT', '磁盘文件已变化或被删除，操作已停止；请重新读取后核对。');
+    }
+    return target;
+  }
+
+  async move(id, parent, version) {
+    const source = await this.checkedFile(id, version);
+    const directory = await this.resolve(parent);
+    if (!(await fs.stat(directory)).isDirectory()) throw failure('PATH', '请选择文件夹。');
+    const next = parent ? `${parent}/${path.basename(source)}` : path.basename(source);
+    if (next === id) return { from: id, id, version };
+    const destination = path.join(directory, path.basename(source));
+    // Exclusive hard-link creation preserves bytes/metadata and cannot overwrite a destination.
+    const linked = await fs.lstat(source, { bigint: true });
+    await fs.link(source, destination);
+    try {
+      const live = await fs.lstat(source, { bigint: true });
+      const target = await fs.lstat(destination, { bigint: true });
+      if (live.dev !== linked.dev || live.ino !== linked.ino || target.dev !== linked.dev || target.ino !== linked.ino) {
+        throw failure('CONFLICT', '移动期间文件已被替换，已停止操作并保留新文件。');
+      }
+      await fs.unlink(source);
+    }
+    catch (error) {
+      try {
+        const current = await fs.lstat(destination, { bigint: true });
+        if (current.dev !== linked.dev || current.ino !== linked.ino) throw new Error('Destination changed');
+        await fs.unlink(destination);
+      }
+      catch { throw failure('MOVE_PARTIAL', '移动未完成，源文件与目标文件均保留；请刷新目录核对。'); }
+      throw error;
+    }
+    const opened = this.opened.get(id);
+    this.opened.delete(id); this.opened.set(next, opened);
+    return { from: id, id: next, version };
+  }
+
+  async trash(id, version, trashItem) {
+    const target = await this.checkedFile(id, version);
+    await trashItem(target);
+    this.opened.delete(id);
+    return { id };
   }
 
   async createDirectory(parent, name) {

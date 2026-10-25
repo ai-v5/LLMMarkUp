@@ -12,6 +12,8 @@ const api = window.studio;
 const editable = new Compartment();
 const appearance = new Compartment();
 let editorDark = false;
+let editorScale = 1;
+let newFileParent = '';
 let current = null;
 const documents = new Map();
 let ready = false;
@@ -21,10 +23,12 @@ let selectedDirectory = '';
 const directories = new Map();
 let busy = false;
 let previewTimer;
+let zoomTimer;
 let dialogResolve;
+let trashResolve;
 
 const theme = EditorView.theme({
-  '&': { height: '100%', fontSize: '14px', color: 'var(--editor-ink)', backgroundColor: 'var(--surface)' },
+  '&': { height: '100%', fontSize: 'calc(14px * var(--editor-scale, 1))', color: 'var(--editor-ink)', backgroundColor: 'var(--surface)' },
   '.cm-scroller': { overflow: 'auto', fontFamily: 'Consolas, "Microsoft YaHei", monospace', lineHeight: '1.85' },
   '.cm-content': { padding: '22px 12px 80px', caretColor: 'var(--accent)' },
   '.cm-gutters': { backgroundColor: 'var(--heading-bg)', borderRight: '1px solid var(--line)', color: 'var(--muted)', minWidth: '42px' },
@@ -56,7 +60,7 @@ function rememberSession() {
   if (!ready) return;
   const state = { tabs: [...documents.keys()], activeId: current?.id || null,
     editorTheme: editorDark ? 'dark' : 'light', previewTheme: $('preview-pane').dataset.theme,
-    previewScale: Number($('preview-scale').value) };
+    editorScale, previewScale: Number($('preview-scale').value) };
   const serialized = JSON.stringify({ folder: folder?.path, ...state });
   if (serialized !== lastSession) { lastSession = serialized; api.remember(state); }
 }
@@ -165,6 +169,10 @@ async function openDocument(id) {
 async function closeDocument(id) {
   const entry = documents.get(id);
   if (!entry || !await ensureSaved(entry)) return;
+  await removeDocument(id);
+}
+async function removeDocument(id) {
+  const entry = documents.get(id);
   const index = [...documents.keys()].indexOf(id);
   documents.delete(id);
   if (current === entry) {
@@ -310,9 +318,11 @@ $('refresh').onclick = () => action(() => listInto('', $('tree')));
 async function reload() {
   if (current && await ensureSaved()) loadDocument(unwrap(await api.read(current.id)));
 }
-function newFile() {
+function newFile(parent = '') {
   if (busy || !folder) return;
   if (documents.size >= 50) { notice('最多同时打开 50 个文件，请先关闭部分标签。', true); return; }
+  newFileParent = parent;
+  $('new-location').textContent = `在 ${parent ? `${folder.name}/${parent}` : folder.name} 中创建，不覆盖同名文件。`;
   $('new-name').value = ''; $('new-dialog').showModal(); $('new-name').focus();
 }
 function newDirectory() {
@@ -340,18 +350,89 @@ $('folder-form').onsubmit = event => {
     notice(`已新建目录：${created.id}`);
   });
 };
-function modalOpen() { return $('new-dialog').open || $('folder-dialog').open || $('unsaved-dialog').open; }
-$('new-file').onclick = newFile;
+function modalOpen() { return $('new-dialog').open || $('folder-dialog').open || $('unsaved-dialog').open || $('trash-dialog').open; }
+$('new-file').onclick = () => newFile();
 $('new-cancel').onclick = () => $('new-dialog').close();
 $('new-form').onsubmit = event => {
   event.preventDefault();
   const name = $('new-name').value;
   $('new-dialog').close();
   action(async () => {
-    loadDocument(unwrap(await api.create(name)));
+    loadDocument(unwrap(await api.create(name, newFileParent)));
     await listInto('', $('tree'));
+    await revealDirectory(selectedDirectory);
   });
 };
+function confirmTrash(id) {
+  $('trash-message').textContent = `文件“${id}”将移至系统回收站，之后可从回收站恢复。`;
+  return new Promise(resolve => {
+    trashResolve = resolve; $('trash-dialog').showModal();
+    $('trash-dialog').querySelector('[data-trash-choice="cancel"]').focus();
+  });
+}
+$('trash-dialog').onclick = event => {
+  if (event.target.dataset.trashChoice) {
+    $('trash-dialog').close(); trashResolve?.(event.target.dataset.trashChoice === 'trash');
+  }
+};
+$('trash-dialog').oncancel = event => { event.preventDefault(); $('trash-dialog').close(); trashResolve?.(false); };
+async function trashFile(id) {
+  const entry = documents.get(id);
+  if (entry && !await ensureSaved(entry)) return;
+  const file = entry || unwrap(await api.inspect(id));
+  if (!await confirmTrash(id)) return;
+  unwrap(await api.trash(id, file.version));
+  if (entry) await removeDocument(id);
+  await listInto('', $('tree')); await revealDirectory(selectedDirectory);
+  notice(`已移至回收站：${id}`);
+}
+async function moveFile(id) {
+  const entry = documents.get(id);
+  const file = entry || unwrap(await api.inspect(id));
+  const parent = unwrap(await api.chooseMoveDirectory());
+  if (parent === null) return;
+  const destination = parent ? `${parent}/${id.split('/').at(-1)}` : id.split('/').at(-1);
+  if (destination !== id && documents.has(destination)) throw new Error('目标文件有已打开的标签，请先关闭该标签后再移动。');
+  const moved = unwrap(await api.move(id, parent, file.version));
+  if (entry && moved.id !== id) {
+    const entries = [...documents].map(([key, value]) => [key === id ? moved.id : key, value]);
+    entry.id = moved.id; entry.version = moved.version;
+    documents.clear(); for (const [key, value] of entries) documents.set(key, value);
+  }
+  selectedDirectory = parent;
+  await listInto('', $('tree')); await revealDirectory(parent); updateStatus();
+  notice(moved.id === id ? '文件已在该目录中。' : `已移动至：${moved.id}`);
+}
+function showTreeMenu(event, button) {
+  event.preventDefault();
+  if (busy || !folder || modalOpen()) return;
+  const id = button?.dataset.file ?? button?.dataset.directory ?? '';
+  const file = button?.dataset.file !== undefined;
+  const menu = $('tree-menu'); menu.replaceChildren();
+  const choices = file ? [
+    ['移动到…', () => action(() => moveFile(id))],
+    ['删除（移至回收站）…', () => action(() => trashFile(id))]
+  ] : [
+    ['新建 Markdown…', () => newFile(id)],
+    ['新建子目录…', () => { selectedDirectory = id; newDirectory(); }]
+  ];
+  for (const [label, run] of choices) {
+    const item = document.createElement('button'); item.setAttribute('role', 'menuitem'); item.textContent = label;
+    item.onclick = () => { menu.hidePopover(); run(); }; menu.append(item);
+  }
+  menu.style.left = `${Math.max(4, Math.min(event.clientX, window.innerWidth - 215))}px`;
+  menu.style.top = `${Math.max(4, Math.min(event.clientY, window.innerHeight - 105))}px`;
+  menu.showPopover(); menu.querySelector('button').focus();
+}
+$('tree').oncontextmenu = event => showTreeMenu(event, event.target.closest('[data-file], [data-directory]'));
+$('folder-name').oncontextmenu = event => showTreeMenu(event, null);
+$('tree').onkeydown = event => {
+  if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+  const button = event.target.closest('[data-file], [data-directory]');
+  const bounds = (button || $('tree')).getBoundingClientRect();
+  showTreeMenu({ preventDefault: () => event.preventDefault(), clientX: bounds.left + 15, clientY: bounds.top + 20 }, button);
+};
+
 api.onCommand(command => {
   if (modalOpen()) return;
   if (command === 'open') action(chooseFolder);
@@ -404,11 +485,36 @@ function syncPreview() {
 }
 view.scrollDOM.addEventListener('scroll', syncPreview);
 $('sync-scroll').onchange = syncPreview;
-$('preview-scale').onchange = () => {
-  $('preview').style.zoom = $('preview-scale').value;
-  syncPreview();
-  rememberSession();
-};
+function setPanelScale(panel, value, offset = 0) {
+  const next = Math.round(Math.max(0.5, Math.min(2, value)) * 1000) / 1000;
+  if (panel === 'editor') {
+    editorScale = next; $('editor').style.setProperty('--editor-scale', String(next));
+    $('editor-scale').textContent = `${Math.round(next * 100)}%`; view.requestMeasure();
+  } else {
+    const old = Number($('preview-scale').value);
+    $('preview-scale').querySelector('[data-custom]')?.remove();
+    if (![...$('preview-scale').options].some(option => Number(option.value) === next)) {
+      const option = new Option(`${Math.round(next * 100)}%`, String(next)); option.dataset.custom = 'true';
+      $('preview-scale').add(option);
+    }
+    $('preview-scale').value = String(next); $('preview').style.zoom = String(next);
+    const scroll = $('preview-scroll'); scroll.scrollTop = (scroll.scrollTop + offset) * next / old - offset;
+  }
+}
+$('editor-scale').onclick = () => { setPanelScale('editor', 1); rememberSession(); };
+$('preview-scale').onchange = () => { setPanelScale('preview', Number($('preview-scale').value)); syncPreview(); rememberSession(); };
+for (const panel of ['editor', 'preview']) {
+  $(`${panel}-pane`).addEventListener('wheel', event => {
+    if (!event.ctrlKey) return;
+    event.preventDefault();
+    if (busy || modalOpen()) return;
+    const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 100 : 1);
+    const old = panel === 'editor' ? editorScale : Number($('preview-scale').value);
+    const offset = Math.max(0, event.clientY - $('preview-scroll').getBoundingClientRect().top);
+    setPanelScale(panel, old * Math.exp(-Math.max(-100, Math.min(100, delta)) * 0.006), offset);
+    clearTimeout(zoomTimer); zoomTimer = setTimeout(rememberSession, 150);
+  }, { passive: false, capture: true });
+}
 for (const panel of ['editor', 'preview']) {
   for (const mode of ['light', 'dark']) {
     $(`${panel}-${mode}`).onclick = () => {
@@ -447,12 +553,21 @@ for (const [id, adjust] of [['splitter', resize], ['sidebar-splitter', resizeSid
 }
 window.addEventListener('resize', () => resizeSidebar($('sidebar-splitter').getBoundingClientRect().left));
 // Documents cannot navigate the privileged application page.
-$('preview').addEventListener('click', event => { if (event.target.closest('a')) event.preventDefault(); });
+$('preview').addEventListener('click', event => {
+  const anchor = event.target.closest('a');
+  if (!anchor) return;
+  event.preventDefault();
+  const href = anchor.getAttribute('href');
+  if (href?.startsWith('#')) {
+    const target = document.getElementById(href.slice(1));
+    if (target && $('preview').contains(target)) target.scrollIntoView({ block: 'center' });
+  }
+});
 api.onSessionError(() => notice('无法保存打开记录或界面配置；文档内容仍可正常编辑和保存。', true));
 action(async () => {
   const state = unwrap(await api.restore());
   $(`editor-${state.editorTheme}`).click(); $(`preview-${state.previewTheme}`).click();
-  $('preview-scale').value = String(state.previewScale); $('preview').style.zoom = String(state.previewScale);
+  setPanelScale('editor', state.editorScale); setPanelScale('preview', state.previewScale);
   if (state.folderInfo) {
     await changeWorkspace(state.folderInfo);
     for (const file of state.files) loadDocument(file);

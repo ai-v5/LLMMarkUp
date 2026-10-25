@@ -11,10 +11,12 @@ button.primary { background: #466bdd; color: white; border-color: #466bdd; box-s
 button.primary:hover { background: #365bcf; }
 .workspace { --sidebar-width: 245px; display: grid; grid-template-columns: var(--sidebar-width) 5px minmax(0, 1fr); flex: 1; min-height: 0; }
 .sidebar { min-width: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--sidebar-bg); color: var(--ink); }
-.section-heading { height: 40px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 12px 0 17px; font-size: 11px; color: var(--muted); letter-spacing: 1px; }
-.icon-button { background: transparent; border: 0; padding: 3px 6px; font-size: 20px; color: var(--muted); }
+.section-heading { height: 36px; flex-shrink: 0; display: flex; flex-wrap: nowrap; align-items: center; justify-content: space-between; padding: 0 8px; color: var(--muted); }
+.sidebar-tools { display: flex; flex-wrap: nowrap; align-items: center; gap: 2px; }
+.icon-button { display: inline-flex; justify-content: center; align-items: center; flex: 0 0 28px; width: 28px; height: 28px; background: transparent; border: 0; padding: 5px; color: var(--muted); border-radius: 5px; }
+.icon-button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .icon-button:hover { background: var(--active-line); }
-.folder-name { padding: 4px 23px 17px; font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-name { padding: 4px 17px 13px; font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
 #tree { overflow: auto; flex: 1; padding: 0 9px 20px; }
 .tree-hint { padding: 10px 14px; font-size: 12px; color: var(--muted); line-height: 1.9; }
 .tree-item { border: 0; display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border-radius: 5px; padding: 8px 12px; background: transparent; color: var(--ink); font-size: 12px; }
@@ -100,9 +102,15 @@ dialog p { font-size: 12px; color: #8795aa; line-height: 1.9; margin-bottom: 22p
 #new-form label, #folder-form label { display: block; font-size: 11px; margin-bottom: 8px; color: #8190a8; }
 #new-name, #folder-new-name, #folder-parent { width: 100%; padding: 10px 12px; border: 1px solid #d6deed; border-radius: 6px; color: #34425a; background: white; }
 #folder-parent { margin-bottom: 16px; }
-#open-menu { position: fixed; inset: auto; margin: 0; width: 330px; max-height: min(560px, 80vh); overflow: auto; padding: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); box-shadow: 0 12px 40px #1d355330; }
-#open-menu button { display: block; width: 100%; border: 0; text-align: left; padding: 9px 10px; font-size: 11px; overflow: hidden; text-overflow: ellipsis; color: inherit; background: transparent; }
-#open-menu button:hover { background: var(--active-line); }
+#open-menu, #tree-menu { position: fixed; inset: auto; margin: 0; width: 330px; max-height: min(560px, 80vh); overflow: auto; padding: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); box-shadow: 0 12px 40px #1d355330; }
+#tree-menu { width: 210px; }
+#open-menu button, #tree-menu button { display: block; width: 100%; border: 0; text-align: left; padding: 9px 10px; font-size: 11px; overflow: hidden; text-overflow: ellipsis; color: inherit; background: transparent; }
+#open-menu button:hover, #tree-menu button:hover { background: var(--active-line); }
+.scale-reset { border: 0; background: transparent; color: var(--muted); font-size: 10px; padding: 2px 3px; min-width: 37px; }
+.task-list-item { list-style: none; }
+.task-list-item-checkbox { margin-left: -1.5em; margin-right: .4em; }
+.footnotes { font-size: .9em; color: var(--muted); }
+.footnote-ref { font-size: .8em; }
 .recent-heading { padding: 12px 10px 5px; border-top: 1px solid var(--line); margin-top: 5px; font-size: 10px; color: var(--muted); }
 .recent-empty { padding: 6px 10px; color: var(--muted); font-size: 10px; }
 @media (max-width: 1100px) { .markdown-body { padding: 20px 24px 80px; } .pane-heading { padding: 5px 10px; } .pane-heading small { display: none; } }
