@@ -1,0 +1,11 @@
+.codex/worktrees/
+/local/
+outputs/
+dist/
+node_modules/
+.env
+.env.*
+*.log
+coverage/
+Thumbs.db
+.DS_Store
