@@ -99,8 +99,8 @@ dialog::backdrop { background: #24375440; }
 dialog h2 { font-size: 18px; margin: 0 0 14px; font-weight: 600; }
 dialog p { font-size: 12px; color: #8795aa; line-height: 1.9; margin-bottom: 22px; }
 .dialog-actions { display: flex; gap: 9px; justify-content: flex-end; margin-top: 25px; }
-#new-form label, #folder-form label { display: block; font-size: 11px; margin-bottom: 8px; color: #8190a8; }
-#new-name, #folder-new-name, #folder-parent { width: 100%; padding: 10px 12px; border: 1px solid #d6deed; border-radius: 6px; color: #34425a; background: white; }
+#new-form label, #folder-form label, #rename-form label { display: block; font-size: 11px; margin-bottom: 8px; color: #8190a8; }
+#new-name, #folder-new-name, #folder-parent, #rename-name { width: 100%; padding: 10px 12px; border: 1px solid #d6deed; border-radius: 6px; color: #34425a; background: white; }
 #folder-parent { margin-bottom: 16px; }
 #open-menu, #tree-menu { position: fixed; inset: auto; margin: 0; width: 330px; max-height: min(560px, 80vh); overflow: auto; padding: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); box-shadow: 0 12px 40px #1d355330; }
 #tree-menu { width: 210px; }

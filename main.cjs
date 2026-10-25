@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } = require('electron');
+const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session, shell } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { pathToFileURL } = require('node:url');
@@ -129,6 +129,14 @@ app.whenReady().then(async () => {
     const removed = await workspace.trash(id, version, target => shell.trashItem(target));
     await settings.relocateFile(workspace.root, id).catch(() => window.webContents.send('session:error'));
     return removed;
+  });
+  handle('workspace:rename', async (id, name, version) => {
+    const renamed = await workspace.rename(id, name, version);
+    await settings.relocateFile(workspace.root, id, renamed.id).catch(() => window.webContents.send('session:error'));
+    return renamed;
+  });
+  handle('workspace:copy-path', async id => {
+    await clipboard.writeText(await workspace.filePath(id));
   });
   const command = name => () => window.webContents.send('menu:command', name);
   Menu.setApplicationMenu(Menu.buildFromTemplate([

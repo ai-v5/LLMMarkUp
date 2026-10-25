@@ -355,6 +355,140 @@ test('context actions, compact sidebar, independent pinch zoom and enhanced Mark
   assert.equal(await fs.readFile(path.join(chapter, 'main.md'), 'utf8'), source + '\n移动中的未保存内容\n');
 });
 
+test('rename keeps background drafts, undo, recent history and tabs; copy path awaits the clipboard', { timeout: 90000 }, async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'llmmarkup-rename-e2e-'));
+  let application;
+  t.after(async () => {
+    if (application) {
+      await application.evaluate(({ BrowserWindow }) => {
+        for (const window of BrowserWindow.getAllWindows()) window.removeAllListeners('close');
+      }).catch(() => {});
+      await application.close();
+    }
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  const folder = path.join(root, '合成重命名项目'); await fs.mkdir(folder);
+  const canonical = await fs.realpath(folder);
+  await fs.mkdir(path.join(folder, '章节'));
+  const original = '\uFEFF# 合成原文\r\n';
+  await fs.writeFile(path.join(folder, '章节', '旧名.md'), original);
+  await fs.writeFile(path.join(folder, '章节', '已存在.md'), 'keep');
+  await fs.writeFile(path.join(folder, 'other.md'), '# 另一个标签\n');
+  await fs.writeFile(path.join(folder, '未打开.md'), Buffer.from([0xff, 0xfe]));
+  const profile = path.join(root, 'profile'); await fs.mkdir(profile);
+  await fs.writeFile(path.join(profile, 'studio-session.json'), JSON.stringify({ version: 1, folder: canonical,
+    tabs: ['章节/旧名.md', 'other.md'], activeId: '章节/旧名.md',
+    recentFiles: [{ folder: canonical, id: '章节/旧名.md' }] }));
+  const env = { ...process.env, LLMMARKUP_TEST_DATA: profile }; delete env.ELECTRON_RUN_AS_NODE;
+  const launch = () => electron.launch({
+    ...(process.env.LLMMARKUP_TEST_EXE ? { executablePath: process.env.LLMMARKUP_TEST_EXE, args: [] } : { args: [path.resolve(__dirname, '..')] }), env
+  });
+  application = await launch(); let page = await application.firstWindow();
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await expect(page).toHaveTitle('章节/旧名.md — LLMMarkUp');
+  await page.locator('.cm-content').click(); await page.keyboard.press('Control+End');
+  await page.keyboard.insertText('保留未保存的编辑');
+  const cursor = await page.locator('#cursor-position').textContent();
+  await page.locator('.tab-select[title="other.md"]').click();
+  const context = async (id, label) => {
+    await page.locator(`[data-file="${id}"]`).click({ button: 'right' });
+    await page.locator('#tree-menu').getByRole('menuitem', { name: label, exact: true }).click();
+  };
+  const rename = async name => {
+    await context('章节/旧名.md', '重命名…');
+    await page.locator('#rename-name').fill(name);
+    await page.locator('#rename-form').getByRole('button', { name: '重命名', exact: true }).click();
+  };
+  // Keep the user's real clipboard untouched; exercise the trusted IPC and async write boundary.
+  await application.evaluate(({ clipboard }) => {
+    clipboard.writeText = text => new Promise(resolve => { globalThis.copiedPath = text; globalThis.finishCopy = resolve; });
+  });
+  await context('未打开.md', '复制文件路径');
+  await expect.poll(() => application.evaluate(() => globalThis.copiedPath)).toBe(path.join(canonical, '未打开.md'));
+  await expect(page.locator('#notice')).not.toContainText('已复制');
+  await application.evaluate(() => globalThis.finishCopy());
+  await expect(page.locator('#notice')).toHaveText('已复制文件完整路径');
+  await expect(page.locator('.tab-select[title="other.md"]')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab')).toHaveCount(2);
+  await page.locator('[data-file="章节/旧名.md"]').dispatchEvent('contextmenu', { clientX: 10, clientY: 9000 });
+  await expect(page.locator('#tree-menu [role="menuitem"]')).toHaveCount(4);
+  assert.equal(await page.locator('#tree-menu').evaluate(menu => {
+    const bounds = menu.getBoundingClientRect(); return bounds.top >= 0 && bounds.bottom <= innerHeight && bounds.right <= innerWidth;
+  }), true);
+  await page.locator('#tree-menu').getByRole('menuitem', { name: '重命名…', exact: true }).click();
+  assert.deepEqual(await page.locator('#rename-name').evaluate(input => [input.value, input.selectionStart, input.selectionEnd]), ['旧名.md', 0, 2]);
+  await page.locator('#rename-cancel').click();
+  await rename('已存在.md'); await expect(page.locator('#notice')).toContainText('同名文件');
+  await rename('invalid.txt'); await expect(page.locator('#notice')).toContainText('.markdown');
+  assert.equal(await fs.readFile(path.join(folder, '章节', '旧名.md'), 'utf8'), original);
+  assert.equal(await fs.readFile(path.join(folder, '章节', '已存在.md'), 'utf8'), 'keep');
+  // A stale target tab may still own a draft even after its disk file disappears.
+  await page.locator('[data-file="章节/已存在.md"]').click();
+  await page.locator('.cm-content').click(); await page.keyboard.press('Control+End');
+  await page.keyboard.insertText('目标草稿');
+  await fs.unlink(path.join(folder, '章节', '已存在.md'));
+  await rename('已存在.md'); await expect(page.locator('#notice')).toContainText('已打开的标签');
+  await expect(page.locator('.cm-content')).toContainText('目标草稿');
+  await fs.writeFile(path.join(folder, '章节', '已存在.md'), 'keep');
+  await page.getByRole('button', { name: '关闭 章节/已存在.md', exact: true }).click();
+  await page.locator('[data-choice="discard"]').click();
+  await page.locator('.tab-select[title="other.md"]').click();
+  await rename('新名称.markdown');
+  await expect(page.locator('.tab-select[title="章节/新名称.markdown"]')).toContainText('●');
+  await expect(page.locator('.tab-select[title="other.md"]')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('[data-file="章节/旧名.md"]')).toHaveCount(0);
+  await assert.rejects(fs.access(path.join(folder, '章节', '旧名.md')));
+  assert.equal(await fs.readFile(path.join(folder, '章节', '新名称.markdown'), 'utf8'), original);
+  const recent = await page.evaluate(() => window.studio.recent());
+  assert.equal(recent.ok, true);
+  assert.ok(recent.value.files.some(item => item.id === '章节/新名称.markdown'));
+  assert.ok(recent.value.files.every(item => item.id !== '章节/旧名.md'));
+  await page.locator('#open-folder').click();
+  await expect(page.locator('#open-menu')).toContainText('章节/新名称.markdown');
+  await expect(page.locator('#open-menu')).not.toContainText('章节/旧名.md');
+  await page.keyboard.press('Escape');
+  await application.evaluate(({ clipboard }) => { clipboard.writeText = async text => { globalThis.copiedPath = text; }; });
+  await context('章节/新名称.markdown', '复制文件路径');
+  await expect(page.locator('#notice')).toHaveText('已复制文件完整路径');
+  assert.equal(await application.evaluate(() => globalThis.copiedPath), path.join(canonical, '章节', '新名称.markdown'));
+  await application.evaluate(({ clipboard }) => { clipboard.writeText = async () => { throw new Error('synthetic clipboard failure'); }; });
+  await context('章节/新名称.markdown', '复制文件路径');
+  await expect(page.locator('#notice')).toHaveClass('error'); await expect(page.locator('#notice')).not.toContainText('已复制');
+  await page.locator('.tab-select[title="章节/新名称.markdown"]').click();
+  await expect(page.locator('.cm-content')).toContainText('保留未保存的编辑');
+  await expect(page.locator('#cursor-position')).toHaveText(cursor);
+  await page.locator('.cm-content').focus(); await page.keyboard.press('Control+z');
+  await expect(page.locator('.cm-content')).not.toContainText('保留未保存的编辑');
+  await page.keyboard.press('Control+y');
+  await expect(page.locator('.cm-content')).toContainText('保留未保存的编辑');
+  await page.keyboard.press('Control+s');
+  await expect.poll(() => fs.readFile(path.join(folder, '章节', '新名称.markdown'), 'utf8')).toBe(original + '保留未保存的编辑');
+  // Renaming an active tab must also update the title and preserve the tab order.
+  await page.keyboard.insertText('；活动标签草稿');
+  await context('章节/新名称.markdown', '重命名…'); await page.locator('#rename-name').fill('最终名称.md');
+  await page.locator('#rename-form').getByRole('button', { name: '重命名', exact: true }).click();
+  await expect(page).toHaveTitle('● 章节/最终名称.md — LLMMarkUp');
+  await expect(page.locator('.cm-content')).toContainText('；活动标签草稿');
+  assert.equal(await fs.readFile(path.join(folder, '章节', '最终名称.md'), 'utf8'), original + '保留未保存的编辑');
+  await page.locator('.cm-content').focus(); await page.keyboard.press('Control+s');
+  await expect(page).toHaveTitle('章节/最终名称.md — LLMMarkUp');
+  await expect.poll(() => fs.readFile(path.join(folder, '章节', '最终名称.md'), 'utf8')).toBe(original + '保留未保存的编辑；活动标签草稿');
+  assert.deepEqual(await page.getByRole('tab').evaluateAll(tabs => tabs.map(tab => tab.title)), ['章节/最终名称.md', 'other.md']);
+  await fs.mkdir(path.resolve('outputs/qa'), { recursive: true });
+  await page.locator('[data-file="章节/最终名称.md"]').click({ button: 'right' });
+  await page.screenshot({ path: path.resolve('outputs/qa/rename-copy-path.png') }); await page.keyboard.press('Escape');
+  const closed = application.waitForEvent('close');
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close()).catch(() => {});
+  await closed; application = await launch(); page = await application.firstWindow();
+  await expect(page).toHaveTitle('章节/最终名称.md — LLMMarkUp');
+  await expect(page.getByRole('tab')).toHaveCount(2);
+  await expect(page.locator('.cm-content')).toContainText('保留未保存的编辑');
+  const state = JSON.parse(await fs.readFile(path.join(profile, 'studio-session.json'), 'utf8'));
+  assert.deepEqual(state.tabs, ['章节/最终名称.md', 'other.md']);
+  assert.ok(state.recentFiles.every(item => !['章节/旧名.md', '章节/新名称.markdown'].includes(item.id)));
+  assert.deepEqual(errors, []);
+});
+
 test('legacy desktop configuration restores in the renamed app without changing the legacy file', { timeout: 30000 }, async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'llmmarkup-migration-e2e-'));
   let application;

@@ -159,31 +159,64 @@ class Workspace {
   }
 
   async move(id, parent, version) {
+    return this.relocate(id, parent, path.basename(id), version);
+  }
+
+  async rename(id, name, version) {
+    if (!validName(name) || !isMarkdown(name)) {
+      throw failure('NAME', '请输入普通文件名，以 .md 或 .markdown 结尾，不含目录或特殊字符。');
+    }
+    const parent = path.posix.dirname(id);
+    return this.relocate(id, parent === '.' ? '' : parent, name, version);
+  }
+
+  async filePath(id) {
+    const target = await this.resolve(id, true);
+    if (!(await fs.stat(target)).isFile()) throw failure('TYPE', '目标不是普通文件。');
+    return fs.realpath(target);
+  }
+
+  async relocate(id, parent, name, version) {
     const source = await this.checkedFile(id, version);
     const directory = await this.resolve(parent);
     if (!(await fs.stat(directory)).isDirectory()) throw failure('PATH', '请选择文件夹。');
-    const next = parent ? `${parent}/${path.basename(source)}` : path.basename(source);
+    const next = parent ? `${parent}/${name}` : name;
     if (next === id) return { from: id, id, version };
-    const destination = path.join(directory, path.basename(source));
-    // Exclusive hard-link creation preserves bytes/metadata and cannot overwrite a destination.
-    const linked = await fs.lstat(source, { bigint: true });
-    await fs.link(source, destination);
-    try {
-      const live = await fs.lstat(source, { bigint: true });
-      const target = await fs.lstat(destination, { bigint: true });
-      if (live.dev !== linked.dev || live.ino !== linked.ino || target.dev !== linked.dev || target.ino !== linked.ino) {
-        throw failure('CONFLICT', '移动期间文件已被替换，已停止操作并保留新文件。');
+    const destination = path.join(directory, name);
+    const caseOnly = process.platform === 'win32' && source.toLowerCase() === destination.toLowerCase();
+    const existing = caseOnly ? await fs.lstat(destination, { bigint: true }).catch(error => {
+      if (error.code !== 'ENOENT') throw error;
+      return null;
+    }) : null;
+    if (existing) {
+      // Reject a distinct existing spelling on case-sensitive Windows directories.
+      const names = await fs.readdir(directory);
+      const sourceStat = await fs.lstat(source, { bigint: true });
+      if (names.includes(name) || sourceStat.dev !== existing.dev || sourceStat.ino !== existing.ino) {
+        throw failure('EEXIST', '同名文件已存在，不会覆盖。');
       }
-      await fs.unlink(source);
-    }
-    catch (error) {
+      await fs.rename(source, destination);
+    } else {
+      // Exclusive hard-link creation preserves bytes/metadata and cannot overwrite a destination.
+      const linked = await fs.lstat(source, { bigint: true });
+      await fs.link(source, destination);
       try {
-        const current = await fs.lstat(destination, { bigint: true });
-        if (current.dev !== linked.dev || current.ino !== linked.ino) throw new Error('Destination changed');
-        await fs.unlink(destination);
+        const live = await fs.lstat(source, { bigint: true });
+        const target = await fs.lstat(destination, { bigint: true });
+        if (live.dev !== linked.dev || live.ino !== linked.ino || target.dev !== linked.dev || target.ino !== linked.ino) {
+          throw failure('CONFLICT', '移动或重命名期间文件已被替换，已停止操作并保留新文件。');
+        }
+        await fs.unlink(source);
       }
-      catch { throw failure('MOVE_PARTIAL', '移动未完成，源文件与目标文件均保留；请刷新目录核对。'); }
-      throw error;
+      catch (error) {
+        try {
+          const current = await fs.lstat(destination, { bigint: true });
+          if (current.dev !== linked.dev || current.ino !== linked.ino) throw new Error('Destination changed');
+          await fs.unlink(destination);
+        }
+        catch { throw failure('MOVE_PARTIAL', '移动或重命名未完成，源文件与目标文件均保留；请刷新目录核对。'); }
+        throw error;
+      }
     }
     const opened = this.opened.get(id);
     this.opened.delete(id); this.opened.set(next, opened);
