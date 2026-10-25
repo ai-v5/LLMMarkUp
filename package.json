@@ -1,6 +1,6 @@
 {
   "name": "llmmarkup",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "description": "本地 Markdown 目录、编辑与实时预览",
   "author": "LLMMarkUp contributors",

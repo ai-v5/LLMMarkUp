@@ -408,6 +408,7 @@ test('rename keeps background drafts, undo, recent history and tabs; copy path a
   await expect(page.locator('#notice')).not.toContainText('已复制');
   await application.evaluate(() => globalThis.finishCopy());
   await expect(page.locator('#notice')).toHaveText('已复制文件完整路径');
+  await expect(page.locator('#notice')).toBeHidden({ timeout: 4500 });
   await expect(page.locator('.tab-select[title="other.md"]')).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByRole('tab')).toHaveCount(2);
   await page.locator('[data-file="章节/旧名.md"]').dispatchEvent('contextmenu', { clientX: 10, clientY: 9000 });
@@ -451,9 +452,17 @@ test('rename keeps background drafts, undo, recent history and tabs; copy path a
   await context('章节/新名称.markdown', '复制文件路径');
   await expect(page.locator('#notice')).toHaveText('已复制文件完整路径');
   assert.equal(await application.evaluate(() => globalThis.copiedPath), path.join(canonical, '章节', '新名称.markdown'));
+  await page.waitForTimeout(1400);
+  await context('章节/新名称.markdown', '复制文件路径');
+  await expect(page.locator('#refresh')).toBeEnabled();
+  await page.waitForTimeout(1400);
+  await expect(page.locator('#notice')).toBeVisible();
+  await expect(page.locator('#notice')).toHaveText('已复制文件完整路径');
   await application.evaluate(({ clipboard }) => { clipboard.writeText = async () => { throw new Error('synthetic clipboard failure'); }; });
   await context('章节/新名称.markdown', '复制文件路径');
   await expect(page.locator('#notice')).toHaveClass('error'); await expect(page.locator('#notice')).not.toContainText('已复制');
+  await page.waitForTimeout(2800);
+  await expect(page.locator('#notice')).toBeVisible(); await expect(page.locator('#notice')).toHaveClass('error');
   await page.locator('.tab-select[title="章节/新名称.markdown"]').click();
   await expect(page.locator('.cm-content')).toContainText('保留未保存的编辑');
   await expect(page.locator('#cursor-position')).toHaveText(cursor);
