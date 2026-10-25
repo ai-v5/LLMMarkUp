@@ -25,6 +25,7 @@ const directories = new Map();
 let busy = false;
 let previewTimer;
 let zoomTimer;
+let noticeTimer;
 let dialogResolve;
 let trashResolve;
 
@@ -92,10 +93,12 @@ function updateCursor() {
   const line = view.state.doc.lineAt(head);
   $('cursor-position').textContent = `行 ${line.number}，列 ${head - line.from + 1}`;
 }
-function notice(message = '', error = false) {
+function notice(message = '', error = false, duration = 0) {
+  clearTimeout(noticeTimer);
   $('notice').textContent = message;
   $('notice').hidden = !message;
   $('notice').className = error ? 'error' : '';
+  if (message && !error && duration > 0) noticeTimer = setTimeout(() => notice(), duration);
 }
 function unwrap(result) {
   if (!result.ok) throw Object.assign(new Error(result.message), { code: result.code });
@@ -440,7 +443,7 @@ function showTreeMenu(event, button) {
   const menu = $('tree-menu'); menu.replaceChildren();
   const choices = file ? [
     ['重命名…', () => renameFile(id)],
-    ['复制文件路径', () => action(async () => { notice(); unwrap(await api.copyPath(id)); notice('已复制文件完整路径'); })],
+    ['复制文件路径', () => action(async () => { notice(); unwrap(await api.copyPath(id)); notice('已复制文件完整路径', false, 2500); })],
     ['移动到…', () => action(() => moveFile(id))],
     ['删除（移至回收站）…', () => action(() => trashFile(id))]
   ] : [
