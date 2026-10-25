@@ -1,0 +1,268 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
+const { _electron: electron, expect } = require('@playwright/test');
+
+test('Windows desktop: directory → edit → live preview → save → conflicts → close protection', { timeout: 90000 }, async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'llmmarkup-e2e-'));
+  let application;
+  t.after(async () => {
+    if (application) {
+      // Only test-created windows/fixtures: bypass the dirty guard during test cleanup.
+      await application.evaluate(({ BrowserWindow }) => {
+        for (const window of BrowserWindow.getAllWindows()) window.removeAllListeners('close');
+      }).catch(() => {});
+      await application.close();
+    }
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  const folder = path.join(root, '合成文档'); await fs.mkdir(folder);
+  await fs.mkdir(path.join(folder, '章节'));
+  const source = '# 合成项目计划\n\n这是一份**虚构的演示文档**，用于验证编辑与预览。\n\n## 任务一览\n\n| 阶段 | 内容 | 状态 |\n| --- | --- | --- |\n| 01 | 梳理想法 | 已完成 |\n| 02 | 编写草稿 | 进行中 |\n| 03 | 核对内容 | 待开始 |\n\n> 所有名称和内容均为合成示例。\n\n## 下一步\n\n- 编写清晰的标题\n- 完善正文与表格\n- 保存到本机\n\n```python\nmessage = "Hello, Markdown"\nprint(message)\n```\n';
+  await fs.writeFile(path.join(folder, '项目计划.md'), '\uFEFF' + source.replace(/\n/g, '\r\n'));
+  await fs.writeFile(path.join(folder, '章节', '笔记.markdown'), '# 章节笔记\n');
+  const mathSource = String.raw`# 复杂公式 · 合成示例
+
+行内公式：$e^{i\pi}+1=0$，$\nabla\cdot\mathbf{E}=\frac{\rho}{\varepsilon_0}$。
+
+## 多行对齐与积分
+
+$$
+\begin{aligned}
+\mathcal{L}(\theta) &= -\sum_{i=1}^{n}\log p_\theta(x_i) \\
+\int_{-\infty}^{\infty}e^{-x^2}\,dx &= \sqrt{\pi}
+\end{aligned}
+$$
+
+## 矩阵与分段函数
+
+\[
+A=\begin{pmatrix}a&b\\c&d\end{pmatrix},\quad
+f(x)=\begin{cases}x^2 & x\ge0\\-x & x<0\end{cases}
+\]
+`;
+  await fs.writeFile(path.join(folder, '公式示例.md'), mathSource);
+  const env = { ...process.env, LLMMARKUP_TEST_DATA: path.join(root, 'profile') };
+  delete env.ELECTRON_RUN_AS_NODE;
+  application = await electron.launch({
+    ...(process.env.LLMMARKUP_TEST_EXE ? { executablePath: process.env.LLMMARKUP_TEST_EXE, args: [] } : { args: [path.resolve(__dirname, '..')] }), env
+  });
+  let page = await application.firstWindow();
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  const failedFonts = []; page.on('requestfailed', request => { if (/\.(woff2?|ttf)$/.test(request.url())) failedFonts.push(request.url()); });
+  await expect(page.locator('h1')).toHaveText('专注内容，看见结果。');
+  assert.equal(await page.locator('.app-header, .document-bar').count(), 0);
+  assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
+  assert.equal(await page.evaluate(() => typeof window.process), 'undefined');
+  const options = await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences());
+  assert.equal(options.contextIsolation, true); assert.equal(options.sandbox, true); assert.equal(options.nodeIntegration, false);
+  // Only the native picker is stubbed; all file reads/writes and renderer IPC are real.
+  await application.evaluate(({ dialog }, folder) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] }); }, folder);
+  await page.locator('#open-folder').click();
+  await page.getByRole('menuitem', { name: '打开文件夹…', exact: true }).click();
+  await page.getByRole('button', { name: 'M↓ 项目计划.md', exact: true }).click();
+  await expect(page.locator('#preview h1')).toHaveText('合成项目计划');
+  await expect(page.locator('#preview table')).toBeVisible();
+  assert.ok((await page.locator('#panes').boundingBox()).y < 1);
+  await page.locator('#new-folder').click();
+  await page.locator('#folder-new-name').fill('资料');
+  await page.getByRole('button', { name: '创建目录', exact: true }).click();
+  await expect(page.getByRole('button', { name: '› 资料', exact: true })).toBeVisible();
+  await page.keyboard.press('Control+Shift+n');
+  await expect(page.locator('#folder-parent')).toHaveValue('资料');
+  await page.locator('#folder-new-name').fill('子目录');
+  await page.getByRole('button', { name: '创建目录', exact: true }).click();
+  await expect(page.getByRole('button', { name: '› 子目录', exact: true })).toBeVisible();
+  assert.ok((await fs.stat(path.join(folder, '资料', '子目录'))).isDirectory());
+  await expect(page.locator('#preview h1')).toHaveText('合成项目计划');
+  // Both splitters are real pointer targets; independent panel preferences do not dirty the file.
+  const beforeSidebar = await page.locator('.sidebar').boundingBox();
+  const sidebarHandle = await page.locator('#sidebar-splitter').boundingBox();
+  await page.mouse.move(sidebarHandle.x + 2, sidebarHandle.y + 100); await page.mouse.down();
+  await page.mouse.move(sidebarHandle.x + 82, sidebarHandle.y + 100, { steps: 8 }); await page.mouse.up();
+  assert.ok((await page.locator('.sidebar').boundingBox()).width > beforeSidebar.width + 60);
+  const editorHandle = await page.locator('#splitter').boundingBox();
+  const beforeEditor = await page.locator('#editor-pane').boundingBox();
+  await page.mouse.move(editorHandle.x + 2, editorHandle.y + 100); await page.mouse.down();
+  await page.mouse.move(editorHandle.x - 48, editorHandle.y + 100, { steps: 8 }); await page.mouse.up();
+  assert.ok((await page.locator('#editor-pane').boundingBox()).width < beforeEditor.width - 30);
+  await page.locator('#editor-dark').click();
+  await expect(page.locator('#editor-pane')).toHaveAttribute('data-theme', 'dark');
+  await expect(page.locator('.workspace')).toHaveAttribute('data-theme', 'dark');
+  await expect(page.locator('.sidebar')).toHaveCSS('background-color', 'rgb(32, 36, 44)');
+  await expect(page.locator('#preview-pane')).toHaveAttribute('data-theme', 'light');
+  await page.locator('#preview-dark').click(); await page.locator('#editor-light').click();
+  await expect(page.locator('.sidebar')).toHaveCSS('background-color', 'rgb(246, 248, 252)');
+  await expect(page.locator('#preview-pane')).toHaveAttribute('data-theme', 'dark');
+  const headingHeight = (await page.locator('#preview h1').boundingBox()).height;
+  await page.locator('#preview-scale').selectOption('0.75');
+  assert.ok(Math.abs((await page.locator('#preview h1').boundingBox()).height - headingHeight * 0.75) < 1);
+  await expect(page.locator('#document-status')).toHaveAttribute('data-dirty', 'false');
+  await page.locator('#preview-scale').selectOption('1'); await page.locator('#preview-light').click();
+  await page.locator('.cm-content').click();
+  await page.keyboard.press('Control+End'); await page.keyboard.insertText('\n## 实时修改\n\n中文输入与保存。\n');
+  await expect(page.locator('#preview h2').last()).toHaveText('实时修改');
+  await expect(page.locator('#document-status')).toHaveAttribute('data-dirty', 'true');
+  // Creating a directory does not discard or silently save the open document.
+  await page.locator('#new-folder').click(); await page.locator('#folder-parent').selectOption('');
+  await page.locator('#folder-new-name').fill('草稿资料');
+  await page.getByRole('button', { name: '创建目录', exact: true }).click();
+  await expect(page.locator('#document-status')).toHaveAttribute('data-dirty', 'true');
+  await page.keyboard.press('Control+s');
+  await expect(page.locator('#document-status')).toHaveAttribute('data-dirty', 'false');
+  const bytes = await fs.readFile(path.join(folder, '项目计划.md'), 'utf8');
+  assert.ok(bytes.startsWith('\uFEFF')); assert.match(bytes, /\r\n## 实时修改/);
+  await fs.mkdir(path.resolve('outputs/qa'), { recursive: true });
+  await page.locator('.cm-content').press('Control+Home');
+  await page.evaluate(() => { document.querySelector('.cm-scroller').scrollTop = 0; document.getElementById('preview-scroll').scrollTop = 0; });
+  await page.screenshot({ path: path.resolve('outputs/qa/desktop-editor.png'), scale: 'css' });
+  await page.locator('.cm-content').press('Control+f');
+  await expect(page.locator('.cm-search')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.locator('.cm-content').click(); await page.keyboard.press('Control+End');
+  await page.keyboard.insertText('\n尚未保存');
+  await page.getByRole('button', { name: '› 章节', exact: true }).click();
+  await page.getByRole('button', { name: 'M↓ 笔记.markdown', exact: true }).click();
+  await expect(page.locator('#unsaved-dialog')).toBeHidden();
+  await expect(page.getByRole('tab')).toHaveCount(2);
+  await page.locator('.cm-content').click(); await page.keyboard.press('Control+End');
+  await page.keyboard.insertText('\n另一个未保存草稿');
+  // Exit must catch a dirty inactive tab as well as the active document.
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+  await expect(page.locator('#unsaved-dialog')).toBeVisible();
+  await expect(page.locator('#unsaved-message')).toContainText('项目计划.md');
+  await page.locator('[data-choice="save"]').click();
+  await expect(page.locator('#unsaved-message')).toContainText('笔记.markdown');
+  await page.locator('[data-choice="cancel"]').click();
+  assert.match(await fs.readFile(path.join(folder, '项目计划.md'), 'utf8'), /尚未保存/);
+  assert.equal(await fs.readFile(path.join(folder, '章节', '笔记.markdown'), 'utf8'), '# 章节笔记\n');
+  await page.getByRole('tab', { name: '项目计划.md', exact: true }).click();
+  await expect(page).toHaveTitle(/项目计划\.md/);
+  await expect(page.locator('.cm-content')).toContainText('尚未保存');
+  await page.locator('.cm-content').click(); await page.keyboard.press('Control+End'); await page.keyboard.insertText('\n第二次草稿');
+  await page.keyboard.press('Control+w');
+  await expect(page.locator('#unsaved-dialog')).toBeVisible();
+  await page.locator('[data-choice="discard"]').click();
+  await expect(page.locator('#preview h1')).toHaveText('章节笔记');
+  // A disk edit after opening must survive a local save attempt.
+  await fs.writeFile(path.join(folder, '章节', '笔记.markdown'), '# 外部修改\n');
+  await page.locator('.cm-content').click(); await page.keyboard.press('Control+End'); await page.keyboard.insertText('本机候选');
+  await page.keyboard.press('Control+s');
+  await expect(page.locator('#notice')).toContainText('磁盘文件已变化');
+  assert.equal(await fs.readFile(path.join(folder, '章节', '笔记.markdown'), 'utf8'), '# 外部修改\n');
+  await page.keyboard.press('Control+r'); await page.locator('[data-choice="discard"]').click();
+  await expect(page.locator('#preview h1')).toHaveText('外部修改');
+  await page.locator('#new-file').click(); await page.locator('#new-name').fill('新文档.md');
+  await page.getByRole('button', { name: '创建', exact: true }).click();
+  await expect(page).toHaveTitle(/新文档\.md/);
+  assert.equal(await fs.readFile(path.join(folder, '新文档.md'), 'utf8'), '');
+  // Adversarial Markdown cannot execute or issue a remote image request.
+  await page.locator('.cm-content').click();
+  await page.keyboard.insertText('# 安全示例\n\n<script>window.__injected = true</script>\n\n![x](https://example.invalid/x.png)\n');
+  await expect(page.locator('#preview')).toContainText('首版不加载图片');
+  assert.equal(await page.evaluate(() => window.__injected), undefined);
+  assert.equal(await page.locator('#preview script, #preview img').count(), 0);
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+  await expect(page.locator('#unsaved-dialog')).toBeVisible();
+  await page.locator('[data-choice="cancel"]').click();
+  assert.equal(application.windows().length, 1);
+  // No discard is needed for cleanup: explicitly save the synthetic fixture.
+  await page.keyboard.press('Control+s'); await expect(page.locator('#document-status')).toHaveAttribute('data-dirty', 'false');
+  await page.getByRole('button', { name: 'M↓ 公式示例.md', exact: true }).click();
+  await expect(page.locator('#preview .katex')).toHaveCount(4);
+  assert.equal(await page.locator('#preview .katex-error').count(), 0);
+  await page.evaluate(() => document.fonts.ready);
+  assert.ok(await page.evaluate(() => [...document.fonts].some(font => font.family.startsWith('KaTeX') && font.status === 'loaded')));
+  await page.locator('#preview-scale').selectOption('0.8'); await page.locator('#editor-dark').click();
+  await page.evaluate(() => { document.querySelector('.cm-scroller').scrollTop = 0; document.getElementById('preview-scroll').scrollTop = 0; });
+  await page.screenshot({ path: path.resolve('outputs/qa/desktop-math.png'), scale: 'css' });
+  await page.locator('#preview-dark').click();
+  await page.screenshot({ path: path.resolve('outputs/qa/desktop-dark.png'), scale: 'css' });
+  // Narrow windows/large sidebars still keep all toolbar controls reachable.
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(980, 640));
+  const narrow = await page.locator('#sidebar-splitter').boundingBox();
+  await page.mouse.move(narrow.x + 2, narrow.y + 50); await page.mouse.down();
+  await page.mouse.move(700, narrow.y + 50, { steps: 8 }); await page.mouse.up();
+  await page.locator('#preview-scale').selectOption('0.5');
+  for (const id of ['preview-dark', 'preview-scale', 'sync-scroll']) await expect(page.locator(`#${id}`)).toBeInViewport();
+  assert.deepEqual(failedFonts, []);
+  assert.deepEqual(errors, []);
+  const closed = application.waitForEvent('close');
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close()).catch(() => {});
+  await closed;
+  application = null;
+  // A fresh main process/profile reload restores files and preferences without document contents in the config.
+  const persisted = JSON.parse(await fs.readFile(path.join(root, 'profile', 'studio-session.json'), 'utf8'));
+  assert.equal(persisted.folder, await fs.realpath(folder));
+  assert.ok(persisted.tabs.includes('公式示例.md'));
+  assert.equal(persisted.editorTheme, 'dark'); assert.equal(persisted.previewTheme, 'dark'); assert.equal(persisted.previewScale, 0.5);
+  application = await electron.launch({
+    ...(process.env.LLMMARKUP_TEST_EXE ? { executablePath: process.env.LLMMARKUP_TEST_EXE, args: [] } : { args: [path.resolve(__dirname, '..')] }), env
+  });
+  page = await application.firstWindow();
+  await expect(page.locator('#folder-name')).toHaveText('合成文档');
+  await expect(page.locator('#preview h1')).toHaveText('复杂公式 · 合成示例');
+  await expect(page.getByRole('tab')).toHaveCount(persisted.tabs.length);
+  await expect(page.locator('.sidebar')).toHaveCSS('background-color', 'rgb(32, 36, 44)');
+  await expect(page.locator('#preview-pane')).toHaveAttribute('data-theme', 'dark');
+  await expect(page.locator('#preview-scale')).toHaveValue('0.5');
+  await page.keyboard.press('Control+w');
+  await page.locator('#open-folder').click();
+  await page.getByRole('menuitem', { name: '合成文档 / 公式示例.md', exact: true }).click();
+  await expect(page.locator('#preview .katex')).toHaveCount(4);
+  const otherFolder = path.join(root, '其他文档'); await fs.mkdir(otherFolder);
+  await fs.writeFile(path.join(otherFolder, '另一个.md'), '# 另一份合成文档\n');
+  await application.evaluate(({ dialog }, folder) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] }); }, otherFolder);
+  await page.keyboard.press('Control+o');
+  await expect(page.locator('#folder-name')).toHaveText('其他文档');
+  await expect(page.locator('#preview-scale')).toHaveValue('0.5');
+  await page.getByRole('button', { name: 'M↓ 另一个.md', exact: true }).click();
+  await expect(page.locator('#preview h1')).toHaveText('另一份合成文档');
+  await page.locator('#open-folder').click();
+  await page.getByRole('menuitem', { name: '合成文档 / 公式示例.md', exact: true }).click();
+  await expect(page.locator('#folder-name')).toHaveText('合成文档');
+  await expect(page.locator('#preview .katex')).toHaveCount(4);
+  await expect(page.getByRole('tab')).toHaveCount(1);
+  const closedAgain = application.waitForEvent('close');
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close()).catch(() => {});
+  await closedAgain; application = null;
+});
+
+test('legacy desktop configuration restores in the renamed app without changing the legacy file', { timeout: 30000 }, async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'llmmarkup-migration-e2e-'));
+  let application;
+  t.after(async () => {
+    if (application) {
+      await application.evaluate(({ BrowserWindow }) => {
+        for (const window of BrowserWindow.getAllWindows()) window.removeAllListeners('close');
+      }).catch(() => {});
+      await application.close();
+    }
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  const folder = path.join(root, '合成旧目录'); await fs.mkdir(folder);
+  await fs.writeFile(path.join(folder, '恢复.md'), '# 合成迁移示例\n');
+  const legacyFile = path.join(root, 'legacy-session.json');
+  const legacy = JSON.stringify({ version: 1, folder, tabs: ['恢复.md'], activeId: '恢复.md',
+    editorTheme: 'dark', previewTheme: 'light', previewScale: 0.75,
+    recentFolders: [folder], recentFiles: [{ folder, id: '恢复.md' }] });
+  await fs.writeFile(legacyFile, legacy);
+  const profile = path.join(root, 'new-profile');
+  const env = { ...process.env, LLMMARKUP_TEST_DATA: profile, LLMMARKUP_TEST_LEGACY_SESSION: legacyFile };
+  delete env.ELECTRON_RUN_AS_NODE;
+  application = await electron.launch({
+    ...(process.env.LLMMARKUP_TEST_EXE ? { executablePath: process.env.LLMMARKUP_TEST_EXE, args: [] } : { args: [path.resolve(__dirname, '..')] }), env
+  });
+  const page = await application.firstWindow();
+  await expect(page.locator('#preview h1')).toHaveText('合成迁移示例');
+  await expect(page).toHaveTitle('恢复.md — LLMMarkUp');
+  await expect(page.getByRole('tab', { name: '恢复.md' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.workspace')).toHaveAttribute('data-theme', 'dark');
+  await expect(page.locator('#preview-pane')).toHaveAttribute('data-theme', 'light');
+  await expect(page.locator('#preview-scale')).toHaveValue('0.75');
+  assert.equal(await fs.readFile(legacyFile, 'utf8'), legacy);
+  assert.equal(JSON.parse(await fs.readFile(path.join(profile, 'studio-session.json'), 'utf8')).activeId, '恢复.md');
+});
