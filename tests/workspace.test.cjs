@@ -119,3 +119,88 @@ test('new directories support nested parents without overwriting or escaping', a
   await assert.rejects(workspace.createDirectory('link', 'outside'), { code: 'LINK' });
   assert.equal(await fs.readFile(path.join(root, '资料', 'keep.md'), 'utf8'), 'keep');
 });
+
+test('context creation and moves preserve bytes and versions without overwriting destinations', async t => {
+  const { root, workspace } = await fixture(t);
+  await workspace.createDirectory('', '资料');
+  const created = await workspace.create('嵌套.md', '资料');
+  assert.equal(created.id, '资料/嵌套.md');
+  assert.equal(await workspace.directoryId(path.join(root, '资料')), '资料');
+  assert.equal(await workspace.directoryId(root), '');
+  await assert.rejects(workspace.directoryId(path.dirname(root)), { code: 'PATH' });
+  await assert.rejects(workspace.create('嵌套.md', '资料'), { code: 'EEXIST' });
+  const bytes = Buffer.from('\uFEFF# 合成移动\r\n');
+  await fs.writeFile(path.join(root, '移动.md'), bytes);
+  const file = await workspace.read('移动.md');
+  await fs.writeFile(path.join(root, '资料', '移动.md'), 'existing');
+  await assert.rejects(workspace.move(file.id, '资料', file.version), { code: 'EEXIST' });
+  assert.equal(await fs.readFile(path.join(root, '资料', '移动.md'), 'utf8'), 'existing');
+  await fs.unlink(path.join(root, '资料', '移动.md'));
+  const moved = await workspace.move(file.id, '资料', file.version);
+  assert.equal(moved.id, '资料/移动.md'); assert.equal(moved.version, file.version);
+  assert.deepEqual(await fs.readFile(path.join(root, '资料', '移动.md')), bytes);
+  await assert.rejects(fs.access(path.join(root, '移动.md')));
+  await workspace.save(moved.id, 'saved draft\n', moved.version);
+  assert.equal(await fs.readFile(path.join(root, '资料', '移动.md'), 'utf8'), '\uFEFFsaved draft\r\n');
+  await fs.symlink(path.join(root, '资料'), path.join(root, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
+  await assert.rejects(workspace.directoryId(path.join(root, 'linked')), { code: 'LINK' });
+});
+
+test('failed move cleanup, stale mutations and failed recycle calls keep the source intact', async t => {
+  const { root, workspace } = await fixture(t);
+  await workspace.createDirectory('', 'target');
+  await fs.writeFile(path.join(root, 'a.md'), 'original');
+  const file = await workspace.read('a.md');
+  const unlink = fs.unlink;
+  fs.unlink = async target => {
+    if (target === path.join(workspace.root, 'a.md')) throw Object.assign(new Error('synthetic failure'), { code: 'EACCES' });
+    return unlink(target);
+  };
+  try { await assert.rejects(workspace.move('a.md', 'target', file.version), { code: 'EACCES' }); }
+  finally { fs.unlink = unlink; }
+  assert.equal(await fs.readFile(path.join(root, 'a.md'), 'utf8'), 'original');
+  await assert.rejects(fs.access(path.join(root, 'target', 'a.md')));
+  await assert.rejects(workspace.trash('a.md', file.version, async () => { throw new Error('synthetic trash failure'); }));
+  assert.equal(await fs.readFile(path.join(root, 'a.md'), 'utf8'), 'original');
+  await fs.writeFile(path.join(root, 'a.md'), 'external edit');
+  await assert.rejects(workspace.move('a.md', 'target', file.version), { code: 'CONFLICT' });
+  let called = false;
+  await assert.rejects(workspace.trash('a.md', file.version, async () => { called = true; }), { code: 'CONFLICT' });
+  assert.equal(called, false);
+  const next = await workspace.read('a.md');
+  await workspace.trash('a.md', next.version, target => fs.rename(target, path.join(root, 'target', 'recycled.md')));
+  assert.equal(workspace.opened.has('a.md'), false);
+  assert.equal(await fs.readFile(path.join(root, 'target', 'recycled.md'), 'utf8'), 'external edit');
+});
+
+test('a source replaced during a move is preserved and only the created link is cleaned', async t => {
+  const { root, workspace } = await fixture(t);
+  await workspace.createDirectory('', 'target');
+  await fs.writeFile(path.join(root, 'a.md'), 'original');
+  const file = await workspace.read('a.md');
+  const link = fs.link;
+  fs.link = async (source, destination) => {
+    await link(source, destination);
+    await fs.writeFile(path.join(root, 'replacement.md'), 'external replacement');
+    await fs.rename(path.join(root, 'replacement.md'), source);
+  };
+  try { await assert.rejects(workspace.move('a.md', 'target', file.version), { code: 'CONFLICT' }); }
+  finally { fs.link = link; }
+  assert.equal(await fs.readFile(path.join(root, 'a.md'), 'utf8'), 'external replacement');
+  await assert.rejects(fs.access(path.join(root, 'target', 'a.md')));
+});
+
+test('a destination replaced during a move is never removed by cleanup', async t => {
+  const { root, workspace } = await fixture(t);
+  await workspace.createDirectory('', 'target'); await fs.writeFile(path.join(root, 'a.md'), 'original');
+  const file = await workspace.read('a.md'); const link = fs.link;
+  fs.link = async (source, destination) => {
+    await link(source, destination);
+    await fs.writeFile(path.join(root, 'replacement.md'), 'external target');
+    await fs.rename(path.join(root, 'replacement.md'), destination);
+  };
+  try { await assert.rejects(workspace.move('a.md', 'target', file.version), { code: 'MOVE_PARTIAL' }); }
+  finally { fs.link = link; }
+  assert.equal(await fs.readFile(path.join(root, 'a.md'), 'utf8'), 'original');
+  assert.equal(await fs.readFile(path.join(root, 'target', 'a.md'), 'utf8'), 'external target');
+});

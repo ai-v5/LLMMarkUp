@@ -1,8 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import MarkdownIt from 'markdown-it';
 import { katex } from '@mdit/plugin-katex';
+import { tasklist } from '@mdit/plugin-tasklist';
+import { footnote } from '@mdit/plugin-footnote';
 
 const parser = new MarkdownIt({ html: false, linkify: false, typographer: false, breaks: false });
+parser.inline.ruler.before('text', 'plain_br', (state, silent) => {
+  const match = /^<br[ \t]*\/?>/i.exec(state.src.slice(state.pos, state.posMax));
+  if (!match) return false;
+  if (!silent) state.push('hardbreak', 'br', 0);
+  state.pos += match[0].length;
+  return true;
+});
+parser.use(tasklist, { disabled: true, label: false });
+parser.use(footnote);
 parser.use(katex, { delimiters: 'all', mathFence: true, trust: false, throwOnError: false,
   maxExpand: 1000, maxSize: 30, logger: () => 'ignore' });
 // File and remote images would read local material or send requests just by opening a document.

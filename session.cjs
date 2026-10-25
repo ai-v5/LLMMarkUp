@@ -7,7 +7,7 @@ const text = value => typeof value === 'string' && value.length <= 4096 && !/[\x
 const relative = value => text(value) && !path.isAbsolute(value) &&
   !value.split(/[\\/]/).some(part => part === '..' || part === '.' || part.includes(':')) && /\.(md|markdown)$/i.test(value);
 const folder = value => text(value) && path.isAbsolute(value);
-const scales = new Set([0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.25, 1.5]);
+const scale = value => Number.isFinite(value) && value >= 0.5 && value <= 2 ? value : 1;
 
 function clean(value = {}) {
   const tabs = Array.isArray(value.tabs) ? [...new Set(value.tabs.filter(relative))].slice(0, 50) : [];
@@ -18,7 +18,8 @@ function clean(value = {}) {
     activeId: tabs.includes(value.activeId) ? value.activeId : tabs[0] || null,
     editorTheme: value.editorTheme === 'dark' ? 'dark' : 'light',
     previewTheme: value.previewTheme === 'dark' ? 'dark' : 'light',
-    previewScale: scales.has(value.previewScale) ? value.previewScale : 1,
+    editorScale: scale(value.editorScale),
+    previewScale: scale(value.previewScale),
     recentFolders: Array.isArray(value.recentFolders) ? [...new Set(value.recentFolders.filter(folder))].slice(0, 12) : [],
     recentFiles: Array.isArray(value.recentFiles) ? value.recentFiles.filter(item => item && folder(item.folder) && relative(item.id))
       .filter((item, index, items) => items.findIndex(other => other.folder === item.folder && other.id === item.id) === index)
@@ -76,6 +77,13 @@ class SessionStore {
   rememberFolder(root) { return this.update({ folder: root,
     ...(this.state.folder !== root ? { tabs: [], activeId: null } : {}),
     recentFolders: [root, ...this.state.recentFolders.filter(item => item !== root)] }); }
+  relocateFile(root, from, to = null) {
+    const tabs = this.state.folder === root ? this.state.tabs.map(id => id === from ? to : id).filter(Boolean) : this.state.tabs;
+    return this.update({ tabs,
+      activeId: this.state.folder === root && this.state.activeId === from ? to : this.state.activeId,
+      recentFiles: this.state.recentFiles.map(item => item.folder === root && item.id === from ?
+        (to ? { folder: root, id: to } : null) : item).filter(Boolean) });
+  }
   flush() { return this.pending; }
 }
 module.exports = { SessionStore };

@@ -62,3 +62,19 @@ test('legacy preferences migrate once without changing the source or overwriting
   assert.equal(invalid.error, true);
   await assert.rejects(fs.access(invalidFile));
 });
+
+test('continuous panel zoom persists and file mutations update tabs and recent history', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'llmmarkup-session-mutations-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const file = path.join(root, 'state.json'); const store = new SessionStore(file);
+  await store.rememberFolder(root); await store.rememberFile(root, 'a.md');
+  await store.update({ tabs: ['a.md', 'b.md'], activeId: 'a.md', editorScale: 1.123, previewScale: 1.876 });
+  await store.relocateFile(root, 'a.md', 'sub/a.md');
+  const restored = new SessionStore(file); const state = await restored.load();
+  assert.deepEqual(state.tabs, ['sub/a.md', 'b.md']); assert.equal(state.activeId, 'sub/a.md');
+  assert.equal(state.recentFiles[0].id, 'sub/a.md'); assert.equal(state.editorScale, 1.123); assert.equal(state.previewScale, 1.876);
+  await restored.relocateFile(root, 'sub/a.md');
+  assert.deepEqual(restored.state.tabs, ['b.md']); assert.equal(restored.state.recentFiles.length, 0);
+  await restored.update({ editorScale: Infinity, previewScale: 20 });
+  assert.equal(restored.state.editorScale, 1); assert.equal(restored.state.previewScale, 1);
+});

@@ -12,6 +12,23 @@ test('raw HTML, scripts and event handlers stay inert text', () => {
   assert.doesNotMatch(html, /<(script|img|iframe)\b/);
   assert.match(html, /&lt;script&gt;/);
 });
+
+test('plain br tags become line breaks without changing code, escapes or attributes', () => {
+  assert.match(renderMarkdown('甲<br/>乙<br>丙<BR />丁'), /甲<br>\n乙<br>\n丙<br>\n丁/);
+  const html = renderMarkdown('`<br/>` 与 \\<br/>\n\n```html\n<br/>\n```\n\n<br onclick="bad()">');
+  assert.match(html, /<code>&lt;br\/&gt;<\/code>/);
+  assert.match(html, /与 &lt;br\/&gt;/);
+  assert.doesNotMatch(html, /<br onclick/);
+});
+
+test('tables with breaks, disabled task lists and footnotes render without external resources', () => {
+  const html = renderMarkdown('| A | B |\n| - | - |\n| 甲<br/>乙 | ~~旧~~ |\n\n- [x] done\n- [ ] todo\n\n说明[^a]\n\n[^a]: 合成**脚注**');
+  assert.match(html, /<td>甲<br>\n乙/); assert.match(html, /<s>旧<\/s>/);
+  assert.equal((html.match(/type="checkbox"/g) || []).length, 2);
+  assert.equal((html.match(/disabled="disabled"/g) || []).length, 2);
+  assert.match(html, /class="footnote-ref"/); assert.match(html, /合成<strong>脚注<\/strong>/);
+  assert.doesNotMatch(html, /\b(?:src|href)="(?:https?:|file:|javascript:)/);
+});
 test('images never become resource requests and links cannot navigate', () => {
   const html = renderMarkdown('![<unsafe>](https://example.invalid/image.png)\n\n[web](https://example.invalid/) [local](file:///ignored) [bad](javascript:alert(1))');
   assert.doesNotMatch(html, /<(img|iframe)\b|\b(src|href)=/);

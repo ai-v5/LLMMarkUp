@@ -231,6 +231,130 @@ f(x)=\begin{cases}x^2 & x\ge0\\-x & x<0\end{cases}
   await closedAgain; application = null;
 });
 
+test('context actions, compact sidebar, independent pinch zoom and enhanced Markdown survive restart', { timeout: 90000 }, async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'llmmarkup-context-e2e-'));
+  let application;
+  t.after(async () => {
+    if (application) {
+      await application.evaluate(({ BrowserWindow }) => {
+        for (const window of BrowserWindow.getAllWindows()) window.removeAllListeners('close');
+      }).catch(() => {});
+      await application.close();
+    }
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  const folder = path.join(root, '用于验证窄目录栏省略显示的合成项目目录'); await fs.mkdir(folder);
+  const chapter = path.join(folder, '章节'); await fs.mkdir(chapter);
+  const source = '# 增强预览\n\n| 内容 | 状态 |\n| - | - |\n| 第一行<br/>第二行 | ~~旧~~ |\n\n- [x] 已完成\n- [ ] 待开始\n\n说明[^a]\n\n' +
+    '合成段落。\n\n'.repeat(25) + '[^a]: 合成脚注\n';
+  await fs.writeFile(path.join(folder, 'main.md'), source);
+  const profile = path.join(root, 'profile');
+  const env = { ...process.env, LLMMARKUP_TEST_DATA: profile }; delete env.ELECTRON_RUN_AS_NODE;
+  const launch = () => electron.launch({
+    ...(process.env.LLMMARKUP_TEST_EXE ? { executablePath: process.env.LLMMARKUP_TEST_EXE, args: [] } : { args: [path.resolve(__dirname, '..')] }), env
+  });
+  application = await launch(); let page = await application.firstWindow();
+  await application.evaluate(({ dialog }, folder) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] }); }, folder);
+  await page.locator('#welcome-open').click();
+  await page.locator('[data-file="main.md"]').click();
+  await expect(page.locator('#preview table br')).toHaveCount(1);
+  await expect(page.locator('#preview .task-list-item-checkbox')).toHaveCount(2);
+  await expect(page.locator('#preview .task-list-item-checkbox').first()).toBeChecked();
+  await expect(page.locator('#preview .task-list-item-checkbox').first()).toBeDisabled();
+  const originalUrl = page.url();
+  await page.locator('.footnote-ref a[href]').click();
+  assert.equal(page.url(), originalUrl);
+  await expect(page.locator('.footnote-item')).toBeInViewport();
+  await page.locator('#sidebar-splitter').focus();
+  for (let i = 0; i < 6; i++) await page.keyboard.press('ArrowLeft');
+  const layout = await page.locator('.sidebar-toolbar').evaluate(toolbar => ({
+    width: toolbar.getBoundingClientRect().width,
+    height: toolbar.getBoundingClientRect().height,
+    right: toolbar.getBoundingClientRect().right,
+    buttons: [...toolbar.querySelectorAll('button')].map(button => {
+      const r = button.getBoundingClientRect(); return { top: r.top, right: r.right, width: r.width };
+    })
+  }));
+  assert.ok(layout.width <= 175); assert.ok(layout.height <= 38);
+  assert.equal(new Set(layout.buttons.map(button => button.top)).size, 1);
+  assert.ok(layout.buttons.every(button => button.right <= layout.right && button.width <= 28));
+  assert.equal(await page.locator('#folder-name').evaluate(element => element.scrollWidth > element.clientWidth), true);
+  const editorFont = () => page.locator('.cm-editor').evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+  const initialFont = await editorFont();
+  const cdp = await application.context().newCDPSession(page);
+  const pinch = async panel => {
+    const bounds = await page.locator(panel).boundingBox();
+    await cdp.send('Input.synthesizePinchGesture', { x: bounds.x + bounds.width / 2, y: bounds.y + 80,
+      scaleFactor: 1.4, relativeSpeed: 800, gestureSourceType: 'mouse' });
+  };
+  await pinch('#editor');
+  await expect.poll(editorFont).toBeGreaterThan(initialFont);
+  await expect(page.locator('#preview-scale')).toHaveValue('1');
+  const resizedFont = await editorFont();
+  await pinch('#preview-scroll');
+  await expect.poll(async () => Number(await page.locator('#preview-scale').inputValue())).toBeGreaterThan(1);
+  assert.equal(await editorFont(), resizedFont);
+  assert.equal(await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.getZoomFactor()), 1);
+  assert.equal(await page.evaluate(() => window.visualViewport.scale), 1);
+  const context = async (id, label, directory = false) => {
+    await page.locator(`[data-${directory ? 'directory' : 'file'}="${id}"]`).click({ button: 'right' });
+    await page.locator('#tree-menu').getByRole('menuitem', { name: label, exact: true }).click();
+  };
+  await context('章节', '新建 Markdown…', true);
+  await expect(page.locator('#new-location')).toContainText('/章节');
+  await page.locator('#new-name').fill('子文件.md'); await page.getByRole('button', { name: '创建', exact: true }).click();
+  await page.locator('.cm-content').click(); await page.keyboard.insertText('# 子文件\n'); await page.keyboard.press('Control+s');
+  await expect.poll(() => fs.readFile(path.join(chapter, '子文件.md'), 'utf8')).toBe('# 子文件\n');
+  await page.locator('.tab-select[title="main.md"]').click();
+  await page.locator('.cm-content').click(); await page.keyboard.press('Control+End'); await page.keyboard.press('Enter');
+  await page.keyboard.insertText('移动中的未保存内容'); await page.keyboard.press('Enter');
+  await page.locator('.tab-select[title="章节/子文件.md"]').click();
+  await application.evaluate(({ dialog }, folder) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] }); }, root);
+  await context('main.md', '移动到…'); await expect(page.locator('#notice')).toContainText('当前工作目录内');
+  assert.equal(await fs.readFile(path.join(folder, 'main.md'), 'utf8'), source);
+  await fs.writeFile(path.join(chapter, 'main.md'), 'keep existing');
+  await application.evaluate(({ dialog }, folder) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] }); }, chapter);
+  await context('main.md', '移动到…'); await expect(page.locator('#notice')).toContainText('同名文件');
+  assert.equal(await fs.readFile(path.join(chapter, 'main.md'), 'utf8'), 'keep existing');
+  await fs.unlink(path.join(chapter, 'main.md'));
+  await context('main.md', '移动到…');
+  await expect(page.locator('.tab-select[title="章节/main.md"]')).toContainText('●');
+  await assert.rejects(fs.access(path.join(folder, 'main.md')));
+  await page.locator('.tab-select[title="章节/main.md"]').click();
+  await expect(page.locator('.cm-content')).toContainText('移动中的未保存内容');
+  await page.keyboard.press('Control+s');
+  await expect.poll(() => fs.readFile(path.join(chapter, 'main.md'), 'utf8')).toContain('移动中的未保存内容');
+  await context('章节/子文件.md', '删除（移至回收站）…');
+  await page.locator('[data-trash-choice="cancel"]').click();
+  assert.equal(await fs.readFile(path.join(chapter, '子文件.md'), 'utf8'), '# 子文件\n');
+  await page.locator('.tab-select[title="章节/子文件.md"]').click();
+  await page.locator('.cm-content').click(); await page.keyboard.insertText('保留草稿');
+  await context('章节/子文件.md', '删除（移至回收站）…');
+  await page.locator('[data-choice="cancel"]').click();
+  await expect(page.locator('.cm-content')).toContainText('保留草稿');
+  await context('章节/子文件.md', '删除（移至回收站）…');
+  await page.locator('[data-choice="save"]').click();
+  await expect(page.locator('#trash-dialog')).toBeVisible(); await page.locator('[data-trash-choice="trash"]').click();
+  await expect(page.getByRole('tab')).toHaveCount(1);
+  await assert.rejects(fs.access(path.join(chapter, '子文件.md')));
+  await page.locator('#editor-dark').click();
+  await page.locator('[data-directory="章节"]').click({ button: 'right' });
+  await page.screenshot({ path: path.resolve('outputs/qa/compact-tree-context.png') });
+  await page.keyboard.press('Escape');
+  const previewScale = await page.locator('#preview-scale').inputValue();
+  const scaleLabel = await page.locator('#editor-scale').textContent();
+  const closed = application.waitForEvent('close');
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close()).catch(() => {});
+  await closed; application = await launch(); page = await application.firstWindow();
+  await expect(page).toHaveTitle('章节/main.md — LLMMarkUp');
+  await expect(page.locator('#preview-scale')).toHaveValue(previewScale);
+  await expect(page.locator('#editor-scale')).toHaveText(scaleLabel);
+  const state = JSON.parse(await fs.readFile(path.join(profile, 'studio-session.json'), 'utf8'));
+  assert.deepEqual(state.tabs, ['章节/main.md']);
+  assert.ok(state.recentFiles.every(item => item.id !== 'main.md' && item.id !== '章节/子文件.md'));
+  assert.equal(await fs.readFile(path.join(chapter, 'main.md'), 'utf8'), source + '\n移动中的未保存内容\n');
+});
+
 test('legacy desktop configuration restores in the renamed app without changing the legacy file', { timeout: 30000 }, async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'llmmarkup-migration-e2e-'));
   let application;

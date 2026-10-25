@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-const { app, BrowserWindow, dialog, ipcMain, Menu, session } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { pathToFileURL } = require('node:url');
@@ -38,7 +38,7 @@ function handle(channel, action) {
       const systemMessages = { EACCES: '无权访问该文件或目录。', EPERM: '文件被占用或无写入权限。',
         ENOENT: '文件或文件夹已被移动或删除。', EEXIST: '同名文件已存在，不会覆盖。',
         ENOTDIR: '文件夹已变化，请刷新目录。', EISDIR: '目标是文件夹。' };
-      const known = new Set(['PATH', 'ROOT', 'LINK', 'TYPE', 'SIZE', 'ENCODING', 'CONFLICT', 'BUSY', 'TEXT', 'NAME']);
+      const known = new Set(['PATH', 'ROOT', 'LINK', 'TYPE', 'SIZE', 'ENCODING', 'CONFLICT', 'BUSY', 'TEXT', 'NAME', 'MOVE_PARTIAL']);
       return { ok: false, code: error.code || 'IO', message: systemMessages[error.code] ||
         (known.has(error.code) ? error.message : '文件操作失败，请检查权限与磁盘状态。') };
     } finally { busy = false; }
@@ -73,7 +73,7 @@ app.whenReady().then(async () => {
     const recents = tabs.includes(value.activeId) && workspace.root ?
       [{ folder: workspace.root, id: value.activeId }, ...settings.state.recentFiles.filter(item => item.folder !== workspace.root || item.id !== value.activeId)] : settings.state.recentFiles;
     settings.update({ folder: workspace.root, tabs, activeId: value.activeId, recentFiles: recents,
-      editorTheme: value.editorTheme, previewTheme: value.previewTheme, previewScale: value.previewScale })
+      editorTheme: value.editorTheme, previewTheme: value.previewTheme, editorScale: value.editorScale, previewScale: value.previewScale })
       .catch(() => window?.webContents.send('session:error'));
   });
   handle('session:restore', async () => {
@@ -104,6 +104,7 @@ app.whenReady().then(async () => {
     return selected;
   });
   handle('workspace:list', id => workspace.list(id));
+  handle('workspace:inspect', id => workspace.read(id));
   handle('workspace:read', async id => {
     const file = await workspace.read(id);
     await settings.rememberFile(workspace.root, id).catch(() => window.webContents.send('session:error'));
@@ -111,8 +112,24 @@ app.whenReady().then(async () => {
   });
   handle('workspace:save', (id, text, version) => workspace.save(id, text, version));
   handle('workspace:changed', (id, version) => workspace.changed(id, version));
-  handle('workspace:create', name => workspace.create(name));
+  handle('workspace:create', (name, parent) => workspace.create(name, parent));
   handle('workspace:mkdir', (parent, name) => workspace.createDirectory(parent, name));
+  handle('workspace:move-directory', async () => {
+    if (!workspace.root) throw Object.assign(new Error('请先打开文件夹。'), { code: 'ROOT' });
+    const result = await dialog.showOpenDialog(window, { title: '选择移动目标（当前工作目录内）',
+      defaultPath: workspace.root, properties: ['openDirectory'] });
+    return result.canceled ? null : workspace.directoryId(result.filePaths[0]);
+  });
+  handle('workspace:move', async (id, parent, version) => {
+    const moved = await workspace.move(id, parent, version);
+    await settings.relocateFile(workspace.root, id, moved.id).catch(() => window.webContents.send('session:error'));
+    return moved;
+  });
+  handle('workspace:trash', async (id, version) => {
+    const removed = await workspace.trash(id, version, target => shell.trashItem(target));
+    await settings.relocateFile(workspace.root, id).catch(() => window.webContents.send('session:error'));
+    return removed;
+  });
   const command = name => () => window.webContents.send('menu:command', name);
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: '文件', submenu: [

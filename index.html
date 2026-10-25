@@ -12,11 +12,19 @@
 <body>
   <div class="workspace" data-theme="light">
     <aside class="sidebar">
-      <div class="section-heading"><span>文件目录</span><div><button id="open-folder" class="icon-button" title="打开文件夹 (Ctrl+O)" aria-label="打开文件夹">▱</button><button id="new-folder" class="icon-button" title="新建目录 (Ctrl+Shift+N)" aria-label="新建目录" disabled>⊞</button><button id="new-file" class="icon-button" title="新建 Markdown (Ctrl+N)" aria-label="新建 Markdown" disabled>＋</button><button id="refresh" class="icon-button" title="刷新目录" aria-label="刷新目录" disabled>↻</button></div></div>
+      <div class="section-heading sidebar-toolbar" role="toolbar" aria-label="文件目录操作">
+        <button id="open-folder" class="icon-button" title="打开与最近打开 (Ctrl+O)" aria-label="打开文件夹"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 6V4h6l2 2h7v3M2 9h16l-3 7H2Z"/></svg></button>
+        <div class="sidebar-tools">
+          <button id="new-folder" class="icon-button" title="新建目录 (Ctrl+Shift+N)" aria-label="新建目录" disabled><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 16V4h6l2 2h8v10ZM7 11h6m-3-3v6"/></svg></button>
+          <button id="new-file" class="icon-button" title="新建 Markdown (Ctrl+N)" aria-label="新建 Markdown" disabled><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 2h8l4 4v12H4ZM12 2v5h4M7 12h6m-3-3v6"/></svg></button>
+          <button id="refresh" class="icon-button" title="刷新目录" aria-label="刷新目录" disabled><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16 7a7 7 0 1 0 1 6M16 2v5h-5"/></svg></button>
+        </div>
+      </div>
       <div id="folder-name" class="folder-name">尚未打开文件夹</div>
       <nav id="tree" aria-label="Markdown 文件目录"><p class="tree-hint">打开一个本地文件夹，<br>从这里选择 Markdown 文件。</p></nav>
       <div class="sidebar-footer"><span class="file-type">MD</span> .md / .markdown <span>UTF-8</span></div>
       <div id="open-menu" popover="auto" role="menu" aria-label="打开与最近打开"></div>
+      <div id="tree-menu" popover="auto" role="menu" aria-label="文件目录右键菜单"></div>
     </aside>
     <div id="sidebar-splitter" class="splitter" role="separator" aria-label="调整文件目录宽度" aria-orientation="vertical" tabindex="0"></div>
     <main>
@@ -25,15 +33,16 @@
         <div class="welcome-symbol">M<span>↓</span></div><span class="eyebrow">你的文字，即时呈现</span><h1>专注内容，看见结果。</h1><p>左侧选文件，中间编辑，右侧实时预览。<br>从一个本地文件夹开始，内容始终留在你的电脑。</p><button id="welcome-open" class="primary">打开 Markdown 文件夹 <span>→</span></button><div class="welcome-features"><span>目录浏览</span><span>源码编辑</span><span>实时预览</span></div>
       </div>
       <div id="panes" hidden>
-        <section id="editor-pane" class="editor-pane" data-theme="light" aria-label="Markdown 编辑区"><div class="pane-heading"><div id="document-tabs" role="tablist" aria-label="打开的 Markdown 文件"></div><div class="pane-controls"><span>可编辑</span><div class="theme-switch" role="group" aria-label="目录与编辑区明暗"><button id="editor-light" aria-label="目录与编辑区明亮模式" aria-pressed="true" title="目录与编辑区明亮模式">☀</button><button id="editor-dark" aria-label="目录与编辑区深色模式" aria-pressed="false" title="目录与编辑区深色模式">☾</button></div></div></div><div id="editor"></div></section>
+        <section id="editor-pane" class="editor-pane" data-theme="light" aria-label="Markdown 编辑区"><div class="pane-heading"><div id="document-tabs" role="tablist" aria-label="打开的 Markdown 文件"></div><div class="pane-controls"><span>可编辑</span><button id="editor-scale" class="scale-reset" aria-label="编辑区缩放，点击恢复100%" title="双指缩放或 Ctrl+滚轮；点击恢复100%">100%</button><div class="theme-switch" role="group" aria-label="目录与编辑区明暗"><button id="editor-light" aria-label="目录与编辑区明亮模式" aria-pressed="true" title="目录与编辑区明亮模式">☀</button><button id="editor-dark" aria-label="目录与编辑区深色模式" aria-pressed="false" title="目录与编辑区深色模式">☾</button></div></div></div><div id="editor"></div></section>
         <div id="splitter" class="splitter" role="separator" aria-label="调整编辑与预览宽度" aria-orientation="vertical" tabindex="0"></div>
-        <section id="preview-pane" class="preview-pane" data-theme="light"><div class="pane-heading"><span>预览 <small>实时更新</small></span><div class="pane-controls"><label><input id="sync-scroll" type="checkbox" checked> 同步滚动</label><select id="preview-scale" aria-label="预览缩放" title="预览缩放"><option value="0.5">50%</option><option value="0.67">67%</option><option value="0.75">75%</option><option value="0.8">80%</option><option value="0.9">90%</option><option value="1" selected>100%</option><option value="1.25">125%</option><option value="1.5">150%</option></select><div class="theme-switch" role="group" aria-label="预览区明暗"><button id="preview-light" aria-label="预览区明亮模式" aria-pressed="true" title="明亮模式">☀</button><button id="preview-dark" aria-label="预览区深色模式" aria-pressed="false" title="深色模式">☾</button></div></div></div><div id="preview-scroll"><article id="preview" class="markdown-body" aria-label="Markdown 实时预览"></article></div></section>
+        <section id="preview-pane" class="preview-pane" data-theme="light"><div class="pane-heading"><span>预览 <small>实时更新</small></span><div class="pane-controls"><label><input id="sync-scroll" type="checkbox" checked> 同步滚动</label><select id="preview-scale" aria-label="预览缩放" title="预览缩放"><option value="0.5">50%</option><option value="0.67">67%</option><option value="0.75">75%</option><option value="0.8">80%</option><option value="0.9">90%</option><option value="1" selected>100%</option><option value="1.25">125%</option><option value="1.5">150%</option><option value="2">200%</option></select><div class="theme-switch" role="group" aria-label="预览区明暗"><button id="preview-light" aria-label="预览区明亮模式" aria-pressed="true" title="明亮模式">☀</button><button id="preview-dark" aria-label="预览区深色模式" aria-pressed="false" title="深色模式">☾</button></div></div></div><div id="preview-scroll"><article id="preview" class="markdown-body" aria-label="Markdown 实时预览"></article></div></section>
       </div>
       <footer class="status-bar"><span id="document-status">等待打开文件</span><div><span id="cursor-position">行 1，列 1</span><span id="word-count">0 字符</span><span id="encoding">UTF-8</span></div></footer>
     </main>
   </div>
   <dialog id="unsaved-dialog"><h2>保存当前修改？</h2><p id="unsaved-message">当前文件有未保存的内容。请选择如何继续。</p><div class="dialog-actions"><button data-choice="cancel">取消</button><button data-choice="discard">不保存</button><button data-choice="save" class="primary">保存并继续</button></div></dialog>
-  <dialog id="new-dialog"><form id="new-form"><h2>新建 Markdown</h2><p>在当前打开的文件夹根目录中创建，不覆盖同名文件。</p><label for="new-name">文件名</label><input id="new-name" type="text" placeholder="我的文档.md" maxlength="180" required><div class="dialog-actions"><button type="button" id="new-cancel">取消</button><button class="primary" type="submit">创建</button></div></form></dialog>
+  <dialog id="trash-dialog"><h2>将文件移至回收站？</h2><p id="trash-message"></p><div class="dialog-actions"><button data-trash-choice="cancel">取消</button><button data-trash-choice="trash" class="primary">移至回收站</button></div></dialog>
+  <dialog id="new-dialog"><form id="new-form"><h2>新建 Markdown</h2><p id="new-location">在当前打开的文件夹根目录中创建，不覆盖同名文件。</p><label for="new-name">文件名</label><input id="new-name" type="text" placeholder="我的文档.md" maxlength="180" required><div class="dialog-actions"><button type="button" id="new-cancel">取消</button><button class="primary" type="submit">创建</button></div></form></dialog>
   <dialog id="folder-dialog"><form id="folder-form"><h2>新建目录</h2><p>选择父目录并输入名称，同名目录或文件不会被覆盖。</p><label for="folder-parent">父目录</label><select id="folder-parent"></select><label for="folder-new-name">目录名</label><input id="folder-new-name" type="text" placeholder="项目资料" maxlength="180" required><div class="dialog-actions"><button type="button" id="folder-cancel">取消</button><button class="primary" type="submit">创建目录</button></div></form></dialog>
 </body>
 </html>
