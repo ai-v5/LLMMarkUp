@@ -14,6 +14,7 @@ const appearance = new Compartment();
 let editorDark = false;
 let editorScale = 1;
 let newFileParent = '';
+let renameTarget = null;
 let current = null;
 const documents = new Map();
 let ready = false;
@@ -350,7 +351,7 @@ $('folder-form').onsubmit = event => {
     notice(`已新建目录：${created.id}`);
   });
 };
-function modalOpen() { return $('new-dialog').open || $('folder-dialog').open || $('unsaved-dialog').open || $('trash-dialog').open; }
+function modalOpen() { return $('new-dialog').open || $('folder-dialog').open || $('unsaved-dialog').open || $('trash-dialog').open || $('rename-dialog').open; }
 $('new-file').onclick = () => newFile();
 $('new-cancel').onclick = () => $('new-dialog').close();
 $('new-form').onsubmit = event => {
@@ -386,6 +387,40 @@ async function trashFile(id) {
   await listInto('', $('tree')); await revealDirectory(selectedDirectory);
   notice(`已移至回收站：${id}`);
 }
+async function applyRelocation(moved) {
+  const entry = documents.get(moved.from);
+  if (entry && moved.id !== moved.from) {
+    const entries = [...documents].map(([key, value]) => [key === moved.from ? moved.id : key, value]);
+    entry.id = moved.id; entry.version = moved.version;
+    documents.clear(); for (const [key, value] of entries) documents.set(key, value);
+  }
+  selectedDirectory = moved.id.includes('/') ? moved.id.slice(0, moved.id.lastIndexOf('/')) : '';
+  updateStatus();
+  await listInto('', $('tree')); await revealDirectory(selectedDirectory);
+}
+function renameFile(id) {
+  if (busy || !folder) return;
+  renameTarget = id;
+  const name = id.split('/').at(-1);
+  $('rename-name').value = name;
+  $('rename-dialog').showModal(); $('rename-name').focus();
+  $('rename-name').setSelectionRange(0, name.lastIndexOf('.'));
+}
+$('rename-cancel').onclick = () => $('rename-dialog').close();
+$('rename-form').onsubmit = event => {
+  event.preventDefault();
+  const id = renameTarget, name = $('rename-name').value;
+  $('rename-dialog').close();
+  action(async () => {
+    const parent = id.includes('/') ? id.slice(0, id.lastIndexOf('/')) : '';
+    const destination = parent ? `${parent}/${name}` : name;
+    if (destination !== id && documents.has(destination)) throw new Error('目标文件有已打开的标签，请先关闭该标签后再重命名。');
+    const file = documents.get(id) || unwrap(await api.inspect(id));
+    const renamed = unwrap(await api.rename(id, name, file.version));
+    await applyRelocation(renamed);
+    notice(renamed.id === id ? '文件名未改变。' : `已重命名为：${renamed.id}`);
+  });
+};
 async function moveFile(id) {
   const entry = documents.get(id);
   const file = entry || unwrap(await api.inspect(id));
@@ -394,13 +429,7 @@ async function moveFile(id) {
   const destination = parent ? `${parent}/${id.split('/').at(-1)}` : id.split('/').at(-1);
   if (destination !== id && documents.has(destination)) throw new Error('目标文件有已打开的标签，请先关闭该标签后再移动。');
   const moved = unwrap(await api.move(id, parent, file.version));
-  if (entry && moved.id !== id) {
-    const entries = [...documents].map(([key, value]) => [key === id ? moved.id : key, value]);
-    entry.id = moved.id; entry.version = moved.version;
-    documents.clear(); for (const [key, value] of entries) documents.set(key, value);
-  }
-  selectedDirectory = parent;
-  await listInto('', $('tree')); await revealDirectory(parent); updateStatus();
+  await applyRelocation(moved);
   notice(moved.id === id ? '文件已在该目录中。' : `已移动至：${moved.id}`);
 }
 function showTreeMenu(event, button) {
@@ -410,6 +439,8 @@ function showTreeMenu(event, button) {
   const file = button?.dataset.file !== undefined;
   const menu = $('tree-menu'); menu.replaceChildren();
   const choices = file ? [
+    ['重命名…', () => renameFile(id)],
+    ['复制文件路径', () => action(async () => { notice(); unwrap(await api.copyPath(id)); notice('已复制文件完整路径'); })],
     ['移动到…', () => action(() => moveFile(id))],
     ['删除（移至回收站）…', () => action(() => trashFile(id))]
   ] : [
@@ -420,9 +451,11 @@ function showTreeMenu(event, button) {
     const item = document.createElement('button'); item.setAttribute('role', 'menuitem'); item.textContent = label;
     item.onclick = () => { menu.hidePopover(); run(); }; menu.append(item);
   }
-  menu.style.left = `${Math.max(4, Math.min(event.clientX, window.innerWidth - 215))}px`;
-  menu.style.top = `${Math.max(4, Math.min(event.clientY, window.innerHeight - 105))}px`;
-  menu.showPopover(); menu.querySelector('button').focus();
+  menu.showPopover();
+  const bounds = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(4, Math.min(event.clientX, window.innerWidth - bounds.width - 4))}px`;
+  menu.style.top = `${Math.max(4, Math.min(event.clientY, window.innerHeight - bounds.height - 4))}px`;
+  menu.querySelector('button').focus();
 }
 $('tree').oncontextmenu = event => showTreeMenu(event, event.target.closest('[data-file], [data-directory]'));
 $('folder-name').oncontextmenu = event => showTreeMenu(event, null);

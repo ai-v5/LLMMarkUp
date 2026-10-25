@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('studio', Object.freeze({
   create: (name, parent = '') => ipcRenderer.invoke('workspace:create', name, parent),
   chooseMoveDirectory: () => ipcRenderer.invoke('workspace:move-directory'),
   move: (id, parent, version) => ipcRenderer.invoke('workspace:move', id, parent, version),
+  rename: (id, name, version) => ipcRenderer.invoke('workspace:rename', id, name, version),
+  copyPath: id => ipcRenderer.invoke('workspace:copy-path', id),
   trash: (id, version) => ipcRenderer.invoke('workspace:trash', id, version),
   createDirectory: (parent, name) => ipcRenderer.invoke('workspace:mkdir', parent, name),
   close: () => ipcRenderer.send('window:close'),

@@ -204,3 +204,56 @@ test('a destination replaced during a move is never removed by cleanup', async t
   assert.equal(await fs.readFile(path.join(root, 'a.md'), 'utf8'), 'original');
   assert.equal(await fs.readFile(path.join(root, 'target', 'a.md'), 'utf8'), 'external target');
 });
+
+test('rename preserves bytes and save metadata, rejects collisions and stale versions', async t => {
+  const { root, workspace } = await fixture(t);
+  await workspace.createDirectory('', '章节');
+  const bytes = Buffer.from('\uFEFF# 合成文件\r\n');
+  await fs.writeFile(path.join(root, '章节', '旧名.md'), bytes);
+  const file = await workspace.read('章节/旧名.md');
+  await fs.writeFile(path.join(root, '章节', '已有.md'), 'keep');
+  await assert.rejects(workspace.rename(file.id, '已有.md', file.version), { code: 'EEXIST' });
+  for (const name of ['../越界.md', '子目录/文档.md', 'con.md', '文档.txt', '.md', '尾空格.md ']) {
+    await assert.rejects(workspace.rename(file.id, name, file.version), { code: 'NAME' });
+  }
+  const same = await workspace.rename(file.id, '旧名.md', file.version);
+  assert.equal(same.id, file.id);
+  const renamed = await workspace.rename(file.id, '新名称.markdown', file.version);
+  assert.equal(renamed.id, '章节/新名称.markdown'); assert.equal(renamed.version, file.version);
+  assert.deepEqual(await fs.readFile(path.join(root, renamed.id)), bytes);
+  await assert.rejects(fs.access(path.join(root, file.id)));
+  assert.equal(workspace.opened.has(file.id), false);
+  await workspace.save(renamed.id, '草稿\n', renamed.version);
+  assert.equal(await fs.readFile(path.join(root, renamed.id), 'utf8'), '\uFEFF草稿\r\n');
+  await assert.rejects(workspace.rename(renamed.id, 'stale.md', file.version), { code: 'CONFLICT' });
+  const latest = await workspace.read(renamed.id);
+  await fs.writeFile(path.join(root, renamed.id), 'external');
+  await assert.rejects(workspace.rename(renamed.id, 'external.md', latest.version), { code: 'CONFLICT' });
+  assert.equal(await fs.readFile(path.join(root, '章节', '已有.md'), 'utf8'), 'keep');
+});
+
+test('case-only rename on Windows keeps the file and its opened version', { skip: process.platform !== 'win32' }, async t => {
+  const { root, workspace } = await fixture(t);
+  const file = await workspace.create('lower.md');
+  const renamed = await workspace.rename(file.id, 'LOWER.MD', file.version);
+  assert.equal(renamed.id, 'LOWER.MD');
+  assert.deepEqual(await fs.readdir(root), ['LOWER.MD']);
+  await workspace.save(renamed.id, 'case-only draft', renamed.version);
+  assert.equal(await fs.readFile(path.join(root, 'LOWER.MD'), 'utf8'), 'case-only draft');
+});
+
+test('copy path resolves ordinary Markdown files without reading their contents', async t => {
+  const { root, workspace } = await fixture(t);
+  await fs.writeFile(path.join(root, '未打开.md'), Buffer.from([0xff, 0xfe]));
+  assert.equal(await workspace.filePath('未打开.md'), path.join(workspace.root, '未打开.md'));
+  assert.equal(workspace.opened.size, 0);
+  await fs.mkdir(path.join(root, '目录.md'));
+  await fs.writeFile(path.join(root, 'not.txt'), 'text');
+  await assert.rejects(workspace.filePath('目录.md'), { code: 'TYPE' });
+  await assert.rejects(workspace.filePath('not.txt'), { code: 'TYPE' });
+  await assert.rejects(workspace.filePath('missing.md'), { code: 'ENOENT' });
+  await assert.rejects(workspace.filePath('../escape.md'), { code: 'PATH' });
+  await assert.rejects(workspace.filePath(path.join(root, '未打开.md')), { code: 'PATH' });
+  await fs.symlink(root, path.join(root, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
+  await assert.rejects(workspace.filePath('linked/未打开.md'), { code: 'LINK' });
+});
