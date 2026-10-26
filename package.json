@@ -2,7 +2,7 @@
   "name": "llmmarkup",
   "version": "0.6.1",
   "private": true,
-  "description": "离线 Windows Markdown 编辑器：文件树、多标签、实时预览与 LaTeX 公式。Offline Windows Markdown editor with live preview and LaTeX.",
+  "description": "简洁、顺手的 Windows Markdown 编辑器，支持文件树、多标签、实时预览与 LaTeX 公式。A simple, easy-to-use Markdown editor for Windows.",
   "author": "LLMMarkUp contributors",
   "license": "AGPL-3.0-only",
   "main": "main.cjs",
