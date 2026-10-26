@@ -2,11 +2,13 @@
 
 <img src="assets/studio.png" width="80" alt="LLMMarkUp 图标">
 
-**离线 Windows Markdown 编辑器，把目录、源码和实时预览放在一个窗口。**
+**简洁、顺手的 Markdown 编辑器。**
+
+文件夹、多标签、实时预览和公式支持，打开就写，用完就存。
 
 面向本地笔记、技术文档和公式写作：用文件树整理资料，用多标签编辑 Markdown，在旁边即时查看排版与 LaTeX 公式。不需要账号、模型服务或本地 Web 服务，文档保存在自己的目录中。
 
-**English:** LLMMarkUp is an offline Markdown editor for Windows with a file tree, multiple tabs, live preview and LaTeX math. Write and organize local documents without accounts, telemetry or cloud services. The desktop application currently has a Chinese interface.
+**English:** LLMMarkUp is a simple, easy-to-use Markdown editor for Windows with a file tree, multiple tabs, live preview and LaTeX math. It works offline without accounts, telemetry or cloud services. The desktop application currently has a Chinese interface.
 
 [项目网站 / Website](https://ai-v5.github.io/LLMMarkUp/) · [使用与构建](#快速开始) · [功能边界](#功能边界) · [AGPL-3.0-only](LICENSE)
 
