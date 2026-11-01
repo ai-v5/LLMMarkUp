@@ -22,6 +22,20 @@ if (process.env.LLMMARKUP_TEST_DATA) app.setPath('userData', process.env.LLMMARK
 const settings = new SessionStore(path.join(app.getPath('userData'), 'studio-session.json'));
 const legacySession = process.env.LLMMARKUP_TEST_DATA ? process.env.LLMMARKUP_TEST_LEGACY_SESSION :
   path.join(app.getPath('appData'), 'mdppt-studio', 'studio-session.json');
+const initialFiles = process.argv.slice(process.defaultApp ? 2 : 1)
+  .filter(value => !value.startsWith('-') && /\.(md|markdown)$/i.test(value))
+  .map(value => path.resolve(value));
+const pendingFiles = initialFiles.length ? [initialFiles] : [];
+const hasLock = app.requestSingleInstanceLock({ files: initialFiles });
+if (!hasLock) app.quit();
+else app.on('second-instance', (_event, _argv, _directory, data) => {
+  if (Array.isArray(data?.files) && data.files.length) pendingFiles.push(data.files);
+  if (window) {
+    if (window.isMinimized()) window.restore();
+    window.show(); window.focus();
+    window.webContents.send('files:pending');
+  }
+});
 
 function trusted(event) {
   return window && event.sender === window.webContents &&
@@ -45,7 +59,7 @@ function handle(channel, action) {
   });
 }
 
-app.whenReady().then(async () => {
+if (hasLock) app.whenReady().then(async () => {
   await settings.load(legacySession);
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   // Only bundled UI and KaTeX font resources; documents cannot read arbitrary files or use the network.
@@ -89,6 +103,27 @@ app.whenReady().then(async () => {
     return { ...state, folderInfo: selected, files, warning: settings.error || (!!state.folder && !selected) || files.length !== state.tabs.length };
   });
   handle('session:recent', () => ({ folders: settings.state.recentFolders, files: settings.state.recentFiles }));
+  handle('files:pending', () => pendingFiles.shift() || null);
+  handle('files:choose', async () => {
+    const result = await dialog.showOpenDialog(window, { title: '打开 Markdown 文件',
+      properties: ['openFile', 'multiSelections'], filters: [{ name: 'Markdown', extensions: ['md', 'markdown'] }] });
+    return result.canceled ? null : result.filePaths;
+  });
+  handle('files:prepare', async paths => {
+    const prepared = await workspace.prepareFiles(paths);
+    return { root: prepared.folder.path, switching: prepared.switching, ids: prepared.files.map(file => file.id) };
+  });
+  handle('files:open', async (paths, expectedRoot, preservedIds) => {
+    if (!Array.isArray(preservedIds) || preservedIds.some(id => typeof id !== 'string')) {
+      throw Object.assign(new Error('打开文件的状态无效。'), { code: 'PATH' });
+    }
+    const result = await workspace.openFiles(paths, expectedRoot, preservedIds);
+    if (result.switching) await settings.rememberFolder(result.folder.path).catch(() => window.webContents.send('session:error'));
+    for (const file of result.files) {
+      await settings.rememberFile(result.folder.path, file.id).catch(() => window.webContents.send('session:error'));
+    }
+    return result;
+  });
   handle('workspace:recent', async (kind, index) => {
     const entry = kind === 'folder' ? settings.state.recentFolders[index] : settings.state.recentFiles[index]?.folder;
     if (!entry || !Number.isInteger(index)) throw Object.assign(new Error('最近记录已失效。'), { code: 'PATH' });
@@ -141,7 +176,8 @@ app.whenReady().then(async () => {
   const command = name => () => window.webContents.send('menu:command', name);
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: '文件', submenu: [
-      { label: '打开文件夹…', accelerator: 'CmdOrCtrl+O', click: command('open') },
+      { label: '打开文件…', accelerator: 'CmdOrCtrl+O', click: command('open-file') },
+      { label: '打开文件夹…', accelerator: 'CmdOrCtrl+Shift+O', click: command('open-folder') },
       { label: '最近打开…', click: command('recent') },
       { label: '新建 Markdown…', accelerator: 'CmdOrCtrl+N', click: command('new') },
       { label: '新建目录…', accelerator: 'CmdOrCtrl+Shift+N', click: command('new-folder') },

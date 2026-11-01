@@ -1,6 +1,6 @@
 {
   "name": "llmmarkup",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "private": true,
   "description": "简洁、顺手的 Windows Markdown 编辑器，支持文件树、多标签、实时预览与 LaTeX 公式。A simple, easy-to-use Markdown editor for Windows.",
   "author": "LLMMarkUp contributors",
@@ -58,6 +58,7 @@
       "signExecutable": false
     },
     "nsis": {
+      "include": "installer.nsh",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,

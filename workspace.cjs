@@ -7,6 +7,24 @@ const MAX_BYTES = 2 * 1024 * 1024;
 const SKIP = new Set(['.git', '.codex', '.agents', '.venv', 'node_modules', '__pycache__']);
 const isMarkdown = name => /\.(md|markdown)$/i.test(name);
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+const inside = (root, target) => {
+  const relative = path.relative(root, target);
+  return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+};
+async function normalizeTarget(target) {
+  let directory = path.parse(target).root;
+  let linked = false;
+  for (const part of path.relative(directory, path.dirname(target)).split(path.sep).filter(Boolean)) {
+    directory = path.join(directory, part);
+    if (!linked) {
+      try {
+        if ((await fs.lstat(directory)).isSymbolicLink()) linked = true;
+        else directory = await fs.realpath(directory);
+      } catch { linked = true; }
+    }
+  }
+  return path.join(directory, path.basename(target));
+}
 
 function failure(code, message) { return Object.assign(new Error(message), { code }); }
 function validName(name) {
@@ -24,6 +42,48 @@ class Workspace {
     this.root = root;
     this.opened.clear();
     return { name: path.basename(root), path: root };
+  }
+
+  async prepareFiles(paths) {
+    if (!Array.isArray(paths) || !paths.length || paths.length > 50 ||
+        paths.some(file => typeof file !== 'string' || !path.isAbsolute(file) || file.includes('\0'))) {
+      throw failure('PATH', '请选择 1 至 50 个本地 Markdown 文件。');
+    }
+    const targets = await Promise.all(paths.map(file => normalizeTarget(path.resolve(file))));
+    let root = this.root && targets.every(file => inside(this.root, file)) ? this.root : path.dirname(targets[0]);
+    while (!targets.every(file => inside(root, file))) {
+      const parent = path.dirname(root);
+      if (parent === root) throw failure('PATH', '请分别打开不同磁盘上的文件。');
+      root = parent;
+    }
+    const candidate = new Workspace();
+    const folder = await candidate.select(root);
+    const files = [];
+    const seen = new Set();
+    for (const target of targets) {
+      const relative = path.relative(root, target).split(path.sep).join('/');
+      const checked = await candidate.resolve(relative, true);
+      const canonical = await fs.realpath(checked);
+      if (!inside(candidate.root, canonical)) throw failure('PATH', '文件路径超出所选目录。');
+      const id = path.relative(candidate.root, canonical).split(path.sep).join('/');
+      if (!seen.has(id)) { files.push(await candidate.read(id)); seen.add(id); }
+    }
+    return { folder, files, candidate, switching: candidate.root !== this.root };
+  }
+
+  async openFiles(paths, expectedRoot, preservedIds = []) {
+    const prepared = await this.prepareFiles(paths);
+    if (prepared.folder.path !== expectedRoot) throw failure('CONFLICT', '文件位置已变化，请重新打开。');
+    if (prepared.switching) {
+      this.root = prepared.candidate.root;
+      this.opened = prepared.candidate.opened;
+    } else {
+      const preserved = new Set(preservedIds);
+      for (const file of prepared.files) {
+        if (!preserved.has(file.id)) this.opened.set(file.id, prepared.candidate.opened.get(file.id));
+      }
+    }
+    return { folder: prepared.folder, files: prepared.files, switching: prepared.switching };
   }
 
   async resolve(relative = '', file = false) {
