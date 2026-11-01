@@ -28,6 +28,9 @@ let zoomTimer;
 let noticeTimer;
 let dialogResolve;
 let trashResolve;
+let pendingExternal = true;
+let externalGeneration = 0;
+let drainingExternal = false;
 
 const theme = EditorView.theme({
   '&': { height: '100%', fontSize: 'calc(14px * var(--editor-scale, 1))', color: 'var(--editor-ink)', backgroundColor: 'var(--surface)' },
@@ -108,6 +111,7 @@ function setBusy(value) {
   busy = value;
   $('open-folder').disabled = value;
   $('welcome-open').disabled = value;
+  $('welcome-open-file').disabled = value;
   $('refresh').disabled = value || !folder;
   $('new-file').disabled = value || !folder;
   $('new-folder').disabled = value || !folder;
@@ -121,7 +125,7 @@ async function action(callback) {
   setBusy(true);
   try { await callback(); }
   catch (error) { notice(error.message, true); }
-  finally { setBusy(false); }
+  finally { setBusy(false); schedulePendingFiles(); }
 }
 function renderPreview() {
   $('preview').innerHTML = renderMarkdown(view.state.doc.toString());
@@ -290,9 +294,48 @@ async function chooseFolder() {
   const selected = unwrap(await api.chooseFolder());
   if (selected) await changeWorkspace(selected);
 }
+async function openExternalFiles(paths) {
+  const plan = unwrap(await api.prepareFiles(paths));
+  const count = plan.switching ? plan.ids.length : documents.size + plan.ids.filter(id => !documents.has(id)).length;
+  if (count > 50) throw new Error('最多同时打开 50 个文件，请先关闭部分标签。');
+  if (plan.switching && !await ensureAllSaved()) return;
+  const result = unwrap(await api.openFiles(paths, plan.root, [...documents.keys()]));
+  if (result.switching) await changeWorkspace(result.folder);
+  for (const file of result.files) {
+    if (documents.has(file.id)) activateDocument(file.id);
+    else loadDocument(file);
+  }
+  if (current) await revealDirectory(selectedDirectory);
+  rememberSession();
+}
+async function chooseFiles() {
+  const paths = unwrap(await api.chooseFiles());
+  if (paths?.length) await openExternalFiles(paths);
+}
+function schedulePendingFiles() {
+  if (ready && pendingExternal && !busy && !drainingExternal && !modalOpen()) queueMicrotask(drainPendingFiles);
+}
+async function drainPendingFiles() {
+  if (!ready || !pendingExternal || busy || drainingExternal || modalOpen()) return;
+  drainingExternal = true;
+  try {
+    while (pendingExternal && !busy && !modalOpen()) {
+      await action(async () => {
+        const generation = externalGeneration;
+        let paths;
+        try { paths = unwrap(await api.takePendingFiles()); }
+        catch (error) { pendingExternal = false; throw error; }
+        if (!paths) { if (generation === externalGeneration) pendingExternal = false; return; }
+        await openExternalFiles(paths);
+      });
+    }
+  } finally { drainingExternal = false; schedulePendingFiles(); }
+}
 async function showRecent() {
   const recent = unwrap(await api.recent());
   const menu = $('open-menu'); menu.replaceChildren();
+  const chooseFile = document.createElement('button'); chooseFile.setAttribute('role', 'menuitem'); chooseFile.textContent = '打开文件…';
+  chooseFile.onclick = () => { menu.hidePopover(); action(chooseFiles); }; menu.append(chooseFile);
   const choose = document.createElement('button'); choose.setAttribute('role', 'menuitem'); choose.textContent = '打开文件夹…';
   choose.onclick = () => { menu.hidePopover(); action(chooseFolder); }; menu.append(choose);
   for (const [kind, entries, heading] of [['file', recent.files, '最近文件'], ['folder', recent.folders, '最近目录']]) {
@@ -318,6 +361,7 @@ async function showRecent() {
 }
 $('open-folder').onclick = () => action(showRecent);
 $('welcome-open').onclick = () => action(chooseFolder);
+$('welcome-open-file').onclick = () => action(chooseFiles);
 $('refresh').onclick = () => action(() => listInto('', $('tree')));
 async function reload() {
   if (current && await ensureSaved()) loadDocument(unwrap(await api.read(current.id)));
@@ -471,7 +515,8 @@ $('tree').onkeydown = event => {
 
 api.onCommand(command => {
   if (modalOpen()) return;
-  if (command === 'open') action(chooseFolder);
+  if (command === 'open-file') action(chooseFiles);
+  if (command === 'open-folder') action(chooseFolder);
   if (command === 'recent') action(showRecent);
   if (command === 'save') action(save);
   if (command === 'reload') action(reload);
@@ -481,6 +526,9 @@ api.onCommand(command => {
 });
 // Also handle DOM keyboard events (including accessibility/automation input).
 document.addEventListener('keydown', event => {
+  if ((event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'o') {
+    event.preventDefault(); if (!modalOpen()) action(chooseFolder); return;
+  }
   if ((event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'n') {
     event.preventDefault(); if (!modalOpen()) newDirectory(); return;
   }
@@ -489,11 +537,27 @@ document.addEventListener('keydown', event => {
   event.preventDefault();
   if (modalOpen()) return;
   if (event.key.toLowerCase() === 's') action(save);
-  if (event.key.toLowerCase() === 'o') action(chooseFolder);
+  if (event.key.toLowerCase() === 'o') action(chooseFiles);
   if (event.key.toLowerCase() === 'n') newFile();
   if (event.key.toLowerCase() === 'r') action(reload);
   if (event.key.toLowerCase() === 'w' && current) action(() => closeDocument(current.id));
 }, true);
+document.addEventListener('dragover', event => {
+  if (!event.dataTransfer?.types.includes('Files')) return;
+  event.preventDefault(); event.dataTransfer.dropEffect = 'copy';
+}, true);
+document.addEventListener('drop', event => {
+  if (!event.dataTransfer?.types.includes('Files')) return;
+  event.preventDefault(); event.stopPropagation();
+  if (busy || modalOpen()) { notice('请先完成当前操作，再打开拖入的文件。', true); return; }
+  try {
+    const paths = api.pathsForFiles(Array.from(event.dataTransfer.files));
+    if (!paths.length || paths.some(path => !path)) throw new Error('请拖入本地 Markdown 文件。');
+    action(() => openExternalFiles(paths));
+  } catch (error) { notice(error.message, true); }
+}, true);
+api.onPendingFiles(() => { pendingExternal = true; externalGeneration++; schedulePendingFiles(); });
+for (const dialog of document.querySelectorAll('dialog')) dialog.addEventListener('close', schedulePendingFiles);
 api.onClose(() => action(async () => { if (await ensureAllSaved()) { rememberSession(); api.close(); } }));
 window.addEventListener('focus', () => {
   if (!current || busy || modalOpen()) return;

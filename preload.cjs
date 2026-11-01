@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 contextBridge.exposeInMainWorld('studio', Object.freeze({
   restore: () => ipcRenderer.invoke('session:restore'),
   recent: () => ipcRenderer.invoke('session:recent'),
   openRecent: (kind, index) => ipcRenderer.invoke('workspace:recent', kind, index),
   remember: state => ipcRenderer.send('session:update', state),
   onSessionError: callback => { ipcRenderer.on('session:error', () => callback()); },
+  chooseFiles: () => ipcRenderer.invoke('files:choose'),
+  prepareFiles: paths => ipcRenderer.invoke('files:prepare', paths),
+  openFiles: (paths, root, preservedIds) => ipcRenderer.invoke('files:open', paths, root, preservedIds),
+  takePendingFiles: () => ipcRenderer.invoke('files:pending'),
+  onPendingFiles: callback => { ipcRenderer.on('files:pending', () => callback()); },
+  pathsForFiles: files => files.map(file => webUtils.getPathForFile(file)),
   chooseFolder: () => ipcRenderer.invoke('workspace:choose'),
   list: id => ipcRenderer.invoke('workspace:list', id),
   read: id => ipcRenderer.invoke('workspace:read', id),

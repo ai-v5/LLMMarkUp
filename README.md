@@ -28,7 +28,7 @@
 
 ## 快速开始
 
-当前版本 **0.6.1**，面向 **Windows x64**。仓库尚未发布二进制 Release，请从源码构建。开发需要 Node.js 22.12+ 和 npm；安装后的应用不需要 Node.js 或 Python。
+当前版本 **0.7.0**，面向 **Windows x64**。仓库尚未发布二进制 Release，请从源码构建。开发需要 Node.js 22.12+ 和 npm；安装后的应用不需要 Node.js 或 Python。
 
 ```powershell
 git clone https://github.com/ai-v5/LLMMarkUp.git
@@ -43,7 +43,7 @@ npm start
 npm run dist
 ```
 
-产物为 `outputs/installers/LLMMarkUp-0.6.1-Setup.exe`。构建显式使用 `--publish never`，不会上传产物或创建 Release。**安装包尚未进行代码签名**，Windows 可能显示未知发布者或 SmartScreen 提示。
+产物为 `outputs/installers/LLMMarkUp-0.7.0-Setup.exe`。构建显式使用 `--publish never`，不会上传产物或创建 Release。**安装包尚未进行代码签名**，Windows 可能显示未知发布者或 SmartScreen 提示。
 
 开发者更新已有本机安装可执行 `npm run dist:local`。脚本核验安装归属，正常请求关闭，原位安装并校验版本和应用包 hash 后重新打开；如有未保存提示，需先处理，脚本不会强杀。首次安装默认使用当前用户 Programs 目录。指定位置可运行：
 
@@ -53,11 +53,13 @@ powershell -File install-local.ps1 -InstallDirectory '<目标目录>' -Launch
 
 ## 日常使用
 
-打开文件夹后，点击文件树中的 `.md` 或 `.markdown` 文件。右键目录或空白处新建文件/子目录，右键文件进行重命名、复制路径、移动或回收站删除。
+可以直接打开 `.md` 或 `.markdown` 文件、将本地文件拖入窗口，或打开文件夹后从文件树选择。安装后也可在 Windows 文件右键的“打开方式”中选择 LLMMarkUp；安装不会修改已有默认程序。文件位于当前目录之外时，应用会先确认所有未保存修改，再切换到所选文件的目录。一次选择多个文件时使用它们的共同父目录，不同磁盘上的文件请分别打开。
+
+右键目录或空白处新建文件/子目录，右键文件进行重命名、复制路径、移动或回收站删除。
 
 | 快捷键 | 操作 |
 | --- | --- |
-| `Ctrl+O` | 打开文件夹 |
+| `Ctrl+O` / `Ctrl+Shift+O` | 打开文件 / 打开文件夹 |
 | `Ctrl+N` / `Ctrl+Shift+N` | 新建 Markdown / 新建目录 |
 | `Ctrl+S` | 保存当前文件 |
 | `Ctrl+W` | 关闭当前标签 |

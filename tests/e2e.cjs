@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
 const { _electron: electron, expect } = require('@playwright/test');
 
 test('Windows desktop: directory → edit → live preview → save → conflicts → close protection', { timeout: 90000 }, async t => {
@@ -216,7 +217,7 @@ f(x)=\begin{cases}x^2 & x\ge0\\-x & x<0\end{cases}
   const otherFolder = path.join(root, '其他文档'); await fs.mkdir(otherFolder);
   await fs.writeFile(path.join(otherFolder, '另一个.md'), '# 另一份合成文档\n');
   await application.evaluate(({ dialog }, folder) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] }); }, otherFolder);
-  await page.keyboard.press('Control+o');
+  await page.keyboard.press('Control+Shift+o');
   await expect(page.locator('#folder-name')).toHaveText('其他文档');
   await expect(page.locator('#preview-scale')).toHaveValue('0.5');
   await page.getByRole('button', { name: 'M↓ 另一个.md', exact: true }).click();
@@ -229,6 +230,116 @@ f(x)=\begin{cases}x^2 & x\ge0\\-x & x<0\end{cases}
   const closedAgain = application.waitForEvent('close');
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close()).catch(() => {});
   await closedAgain; application = null;
+});
+
+test('open files by startup, picker, drop and a second instance without losing drafts', { timeout: 90000 }, async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'llmmarkup-file-open-e2e-'));
+  let application;
+  t.after(async () => {
+    if (application) {
+      await application.evaluate(({ BrowserWindow }) => {
+        for (const window of BrowserWindow.getAllWindows()) window.removeAllListeners('close');
+      }).catch(() => {});
+      await application.close();
+    }
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  const first = path.join(root, '第一目录'); const other = path.join(root, '另一目录');
+  await fs.mkdir(first); await fs.mkdir(other); await fs.mkdir(path.join(first, '章节'));
+  const one = path.join(first, '首次 打开.md'); const two = path.join(first, '章节', '第二.markdown');
+  const external = path.join(other, '外部.md'); const later = path.join(other, '稍后.md');
+  const extra = path.join(other, '额外.md');
+  const invalid = path.join(other, '不支持.txt');
+  await fs.writeFile(one, '\uFEFF# 首次文件\r\n'); await fs.writeFile(two, '# 第二文件\n');
+  await fs.writeFile(external, '# 外部文件\n'); await fs.writeFile(later, '# 稍后打开\n');
+  await fs.writeFile(extra, '# 额外文件\n');
+  await fs.writeFile(invalid, 'not Markdown');
+  const env = { ...process.env, LLMMARKUP_TEST_DATA: path.join(root, 'profile') }; delete env.ELECTRON_RUN_AS_NODE;
+  const appDirectory = path.resolve(__dirname, '..');
+  const executable = process.env.LLMMARKUP_TEST_EXE || require('electron');
+  const args = file => process.env.LLMMARKUP_TEST_EXE ? [file] : [appDirectory, file];
+  application = await electron.launch({ executablePath: executable, args: args(one), env });
+  const page = await application.firstWindow();
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await expect(page.locator('#preview h1')).toHaveText('首次文件');
+  await expect(page.locator('#encoding')).toHaveText('UTF-8 BOM · CRLF');
+  await page.locator('.cm-content').click(); await page.keyboard.press('Control+End');
+  await page.keyboard.insertText('第一份草稿');
+  await application.evaluate(({ dialog }, file) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
+  }, two);
+  await page.keyboard.press('Control+o');
+  await expect(page.locator('#preview h1')).toHaveText('第二文件');
+  await expect(page.getByRole('tab')).toHaveCount(2);
+  await page.locator('.cm-content').click(); await page.keyboard.press('Control+End');
+  await page.keyboard.insertText('第二份草稿');
+
+  const drop = async files => {
+    await page.evaluate(() => {
+      document.querySelector('#synthetic-file-input')?.remove();
+      const input = document.createElement('input'); input.type = 'file'; input.multiple = true;
+      input.id = 'synthetic-file-input'; input.hidden = true; document.body.append(input);
+    });
+    await page.locator('#synthetic-file-input').setInputFiles(files);
+    const prevented = await page.evaluate(() => {
+      const data = new DataTransfer();
+      for (const file of document.querySelector('#synthetic-file-input').files) data.items.add(file);
+      const target = document.querySelector('#preview');
+      const over = new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: data });
+      const event = new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: data });
+      target.dispatchEvent(over); target.dispatchEvent(event);
+      return [over.defaultPrevented, event.defaultPrevented];
+    });
+    assert.deepEqual(prevented, [true, true]);
+  };
+  await drop([one]);
+  await expect(page.locator('.cm-content')).toContainText('第一份草稿');
+  await expect(page.getByRole('tab')).toHaveCount(2);
+  await drop([invalid]);
+  await expect(page.locator('#notice')).toContainText('只支持 .md 和 .markdown');
+  await expect(page.locator('.cm-content')).toContainText('第一份草稿');
+  await drop([external]);
+  await expect(page.locator('#unsaved-message')).toContainText('首次 打开.md');
+  await page.locator('[data-choice="cancel"]').click();
+  await expect(page.locator('.cm-content')).toContainText('第一份草稿');
+  await drop([external]);
+  await expect(page.locator('#unsaved-message')).toContainText('首次 打开.md');
+  await page.locator('[data-choice="save"]').click();
+  await expect(page.locator('#unsaved-message')).toContainText('章节/第二.markdown');
+  await page.locator('[data-choice="cancel"]').click();
+  assert.equal(await fs.readFile(one, 'utf8'), '\uFEFF# 首次文件\r\n第一份草稿');
+  await page.locator('.tab-select[title="章节/第二.markdown"]').click();
+  await expect(page.locator('.cm-content')).toContainText('第二份草稿');
+  await drop([external]);
+  await expect(page.locator('#unsaved-message')).toContainText('章节/第二.markdown');
+  await page.locator('[data-choice="discard"]').click();
+  await expect(page.locator('#preview h1')).toHaveText('外部文件');
+  assert.equal(await fs.readFile(two, 'utf8'), '# 第二文件\n');
+
+  // A file launched while a modal is open must wait until the modal is dismissed.
+  await page.locator('#new-file').click(); await expect(page.locator('#new-dialog')).toBeVisible();
+  const child = spawn(executable, args(later), { env, cwd: root, windowsHide: true, stdio: 'ignore' });
+  await new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('exit', code => code === 0 ? resolve() : reject(new Error(`Second instance exited with ${code}`)));
+  });
+  await expect(page.locator('#new-dialog')).toBeVisible();
+  await expect(page.locator('#preview h1')).toHaveText('外部文件');
+  await page.locator('#new-cancel').click();
+  await expect(page.locator('#preview h1')).toHaveText('稍后打开');
+  await expect(page.getByRole('tab')).toHaveCount(2);
+  assert.equal(application.windows().length, 1);
+  await page.getByRole('button', { name: '关闭 外部.md', exact: true }).click();
+  await fs.writeFile(external, '# 磁盘新内容\n');
+  await drop([external]);
+  await expect(page.locator('#preview h1')).toHaveText('磁盘新内容');
+  await page.locator('.cm-content').click(); await page.keyboard.press('Control+End');
+  await page.keyboard.insertText('重新打开后保存'); await page.keyboard.press('Control+s');
+  await expect.poll(() => fs.readFile(external, 'utf8')).toBe('# 磁盘新内容\n重新打开后保存');
+  await drop([later, extra]);
+  await expect(page.locator('#preview h1')).toHaveText('额外文件');
+  await expect(page.getByRole('tab')).toHaveCount(3);
+  assert.deepEqual(errors, []);
 });
 
 test('context actions, compact sidebar, independent pinch zoom and enhanced Markdown survive restart', { timeout: 90000 }, async t => {

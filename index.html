@@ -13,7 +13,7 @@
   <div class="workspace" data-theme="light">
     <aside class="sidebar">
       <div class="section-heading sidebar-toolbar" role="toolbar" aria-label="文件目录操作">
-        <button id="open-folder" class="icon-button" title="打开与最近打开 (Ctrl+O)" aria-label="打开文件夹"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 6V4h6l2 2h7v3M2 9h16l-3 7H2Z"/></svg></button>
+        <button id="open-folder" class="icon-button" title="打开与最近打开" aria-label="打开文件夹"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 6V4h6l2 2h7v3M2 9h16l-3 7H2Z"/></svg></button>
         <div class="sidebar-tools">
           <button id="new-folder" class="icon-button" title="新建目录 (Ctrl+Shift+N)" aria-label="新建目录" disabled><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 16V4h6l2 2h8v10ZM7 11h6m-3-3v6"/></svg></button>
           <button id="new-file" class="icon-button" title="新建 Markdown (Ctrl+N)" aria-label="新建 Markdown" disabled><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 2h8l4 4v12H4ZM12 2v5h4M7 12h6m-3-3v6"/></svg></button>
@@ -30,7 +30,7 @@
     <main>
       <div id="notice" role="status" hidden></div>
       <div id="welcome" class="welcome">
-        <div class="welcome-symbol">M<span>↓</span></div><span class="eyebrow">你的文字，即时呈现</span><h1>专注内容，看见结果。</h1><p>左侧选文件，中间编辑，右侧实时预览。<br>从一个本地文件夹开始，内容始终留在你的电脑。</p><button id="welcome-open" class="primary">打开 Markdown 文件夹 <span>→</span></button><div class="welcome-features"><span>目录浏览</span><span>源码编辑</span><span>实时预览</span></div>
+        <div class="welcome-symbol">M<span>↓</span></div><span class="eyebrow">你的文字，即时呈现</span><h1>专注内容，看见结果。</h1><p>左侧选文件，中间编辑，右侧实时预览。<br>打开本地文件或文件夹，也可以把文件拖进窗口。</p><div class="welcome-actions"><button id="welcome-open-file" class="primary">打开 Markdown 文件</button><button id="welcome-open" class="primary">打开文件夹 <span>→</span></button></div><div class="welcome-features"><span>目录浏览</span><span>源码编辑</span><span>实时预览</span></div>
       </div>
       <div id="panes" hidden>
         <section id="editor-pane" class="editor-pane" data-theme="light" aria-label="Markdown 编辑区"><div class="pane-heading"><div id="document-tabs" role="tablist" aria-label="打开的 Markdown 文件"></div><div class="pane-controls"><span>可编辑</span><button id="editor-scale" class="scale-reset" aria-label="编辑区缩放，点击恢复100%" title="双指缩放或 Ctrl+滚轮；点击恢复100%">100%</button><div class="theme-switch" role="group" aria-label="目录与编辑区明暗"><button id="editor-light" aria-label="目录与编辑区明亮模式" aria-pressed="true" title="目录与编辑区明亮模式">☀</button><button id="editor-dark" aria-label="目录与编辑区深色模式" aria-pressed="false" title="目录与编辑区深色模式">☾</button></div></div></div><div id="editor"></div></section>

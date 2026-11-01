@@ -104,6 +104,58 @@ test('switching roots invalidates opened file versions', async t => {
   await assert.rejects(workspace.save('a.md', 'wrong', doc.version), { code: 'CONFLICT' });
 });
 
+test('opening selected files preserves existing versions and validates before changing roots', async t => {
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'llmmarkup-open-unit-'));
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const first = path.join(base, 'first'); const second = path.join(base, 'second');
+  await fs.mkdir(first); await fs.mkdir(second); await fs.mkdir(path.join(first, 'nested'));
+  const a = path.join(first, '草稿.md'); const b = path.join(first, 'nested', '二.markdown');
+  const c = path.join(second, '第三.md'); const invalid = path.join(second, 'invalid.txt');
+  await fs.writeFile(a, '# 草稿\n'); await fs.writeFile(b, '# 二\n');
+  await fs.writeFile(c, '\uFEFF# 三\r\n'); await fs.writeFile(invalid, 'not markdown');
+  const workspace = new Workspace(); await workspace.select(first);
+  const draft = await workspace.read('草稿.md');
+  await fs.writeFile(a, '# 外部修改\n');
+  const same = await workspace.prepareFiles([a, b, b]);
+  assert.equal(same.switching, false);
+  assert.deepEqual(same.files.map(file => file.id), ['草稿.md', 'nested/二.markdown']);
+  assert.equal(workspace.opened.size, 1);
+  await workspace.openFiles([a, b], same.folder.path, ['草稿.md']);
+  assert.equal(workspace.opened.get('草稿.md').version, draft.version);
+  await assert.rejects(workspace.save('草稿.md', 'my draft', draft.version), { code: 'CONFLICT' });
+  const reopened = await workspace.openFiles([a], same.folder.path, []);
+  await workspace.save('草稿.md', 'reopened', reopened.files[0].version);
+  const previousRoot = workspace.root;
+  await assert.rejects(workspace.prepareFiles([c, invalid]), { code: 'TYPE' });
+  assert.equal(workspace.root, previousRoot); assert.equal(workspace.opened.size, 2);
+  const external = await workspace.prepareFiles([b, c]);
+  assert.equal(external.switching, true); assert.equal(external.folder.path, await fs.realpath(base));
+  await assert.rejects(workspace.openFiles([b, c], previousRoot), { code: 'CONFLICT' });
+  assert.equal(workspace.root, previousRoot);
+  const opened = await workspace.openFiles([b, c], external.folder.path);
+  assert.deepEqual(opened.files.map(file => file.id), ['first/nested/二.markdown', 'second/第三.md']);
+  assert.equal(opened.files[1].bom, true); assert.equal(opened.files[1].eol, 'CRLF');
+  assert.equal(workspace.opened.has('草稿.md'), false);
+  await workspace.save('second/第三.md', '# 更新\n', opened.files[1].version);
+  assert.equal(await fs.readFile(c, 'utf8'), '\uFEFF# 更新\r\n');
+});
+
+test('opening selected files rejects links, directories and invalid content without changing the workspace', async t => {
+  const { root, workspace } = await fixture(t);
+  await fs.writeFile(path.join(root, 'keep.md'), 'keep');
+  const keep = await workspace.read('keep.md');
+  await fs.mkdir(path.join(root, 'directory.md'));
+  await fs.mkdir(path.join(root, 'real'));
+  await fs.writeFile(path.join(root, 'real', 'linked.md'), 'linked');
+  await fs.writeFile(path.join(root, 'bad.md'), Buffer.from([0xff, 0xfe]));
+  await fs.symlink(path.join(root, 'real'), path.join(root, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
+  await assert.rejects(workspace.resolve('linked/linked.md', true), { code: 'LINK' });
+  for (const [file, code] of [['directory.md', 'TYPE'], ['bad.md', 'ENCODING'], [path.join('linked', 'linked.md'), 'LINK']]) {
+    await assert.rejects(workspace.prepareFiles([path.join(root, file)]), { code });
+    assert.equal(workspace.opened.get('keep.md').version, keep.version);
+  }
+});
+
 test('new directories support nested parents without overwriting or escaping', async t => {
   const { root, workspace } = await fixture(t);
   assert.deepEqual(await workspace.createDirectory('', '资料'), { id: '资料' });
