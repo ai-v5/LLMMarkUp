@@ -28,22 +28,32 @@
 
 ## 快速开始
 
-当前版本 **0.7.0**，面向 **Windows x64**。仓库尚未发布二进制 Release，请从源码构建。开发需要 Node.js 22.12+ 和 npm；安装后的应用不需要 Node.js 或 Python。
+### Windows x64 安装
 
-```powershell
-git clone https://github.com/ai-v5/LLMMarkUp.git
-Set-Location LLMMarkUp
+下载 [LLMMarkUp 0.7.0 Windows 安装包](https://github.com/ai-v5/LLMMarkUp/releases/download/v0.7.0/LLMMarkUp-0.7.0-Setup.exe)，运行安装程序并按提示完成安装。安装后的应用不需要 Node.js 或 Python。也可以在 [GitHub Releases](https://github.com/ai-v5/LLMMarkUp/releases/latest) 查看版本与下载文件。
+
+**安装包尚未进行代码签名**，Windows 可能显示未知发布者或 SmartScreen 提示。
+
+### macOS / Linux 从源码运行
+
+其他系统暂不提供安装包。可在图形桌面环境中尝试从源码运行，需要 Git、Node.js 22.12+、npm 及 Electron 所需的系统依赖。当前版本仅在 Windows x64 验证；macOS 和 Linux 的运行与兼容性尚未验证。
+
+```sh
+git clone --branch v0.7.0 https://github.com/ai-v5/LLMMarkUp.git
+cd LLMMarkUp
 npm ci
 npm start
 ```
 
-生成本机安装包：
+### 从源码构建 Windows 安装包
+
+Windows 开发环境也可按上述步骤获取源码，再运行：
 
 ```powershell
 npm run dist
 ```
 
-产物为 `outputs/installers/LLMMarkUp-0.7.0-Setup.exe`。构建显式使用 `--publish never`，不会上传产物或创建 Release。**安装包尚未进行代码签名**，Windows 可能显示未知发布者或 SmartScreen 提示。
+产物为 `outputs/installers/LLMMarkUp-0.7.0-Setup.exe`。本地构建显式使用 `--publish never`，不会上传产物或创建 Release。
 
 开发者更新已有本机安装可执行 `npm run dist:local`。脚本核验安装归属，正常请求关闭，原位安装并校验版本和应用包 hash 后重新打开；如有未保存提示，需先处理，脚本不会强杀。首次安装默认使用当前用户 Programs 目录。指定位置可运行：
 
@@ -108,7 +118,7 @@ Remove-Item Env:\LLMMARKUP_TEST_EXE
 | `build.mjs` / `install-local.ps1` | 离线资源打包、第三方通知与本机升级 |
 | `docs/` | GitHub Pages 静态项目网站；发布源为 `main:/docs` |
 
-本轮文档与网站更新复验基于 0.6.1：28 项单元测试、4 项开发窗口 E2E 和 4 项打包 EXE E2E 通过；2026-10-26 依赖在线审计为 0 项已知漏洞。打包 EXE 验证不等于安装升级验证；本轮未重新安装应用。物理触控板、真人输入法、多个 Windows 版本、代码签名及 SmartScreen 行为未在本轮验证。未来依赖风险需持续复核。
+0.7.0 发布验证：30 项单元测试、5 项开发窗口 E2E 和 5 项从安装包提取的打包 EXE E2E 通过。打包 EXE 验证不等于安装或升级验证；本轮未运行安装向导或验证原位升级。macOS、Linux、物理触控板、真人输入法、多个 Windows 版本、代码签名及 SmartScreen 行为未在本轮验证。
 
 ## 开源许可与贡献
 
