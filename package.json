@@ -1,6 +1,6 @@
 {
   "name": "llmmarkup",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "private": true,
   "description": "简洁、顺手的 Windows Markdown 编辑器，支持文件树、多标签、实时预览与 LaTeX 公式。A simple, easy-to-use Markdown editor for Windows.",
   "author": "LLMMarkUp contributors",
@@ -9,10 +9,10 @@
   "scripts": {
     "build": "node build.mjs",
     "start": "npm run build && electron .",
-    "test": "node --test tests/*.test.*",
+    "test": "node --test --test-concurrency=1 tests/*.test.*",
     "test:e2e": "npm run build && node --test tests/e2e.cjs",
-    "pack": "npm run build && electron-builder --win dir --x64 --publish never",
-    "dist": "npm run build && electron-builder --win nsis --x64 --publish never",
+    "pack": "npm run build && node scripts/build-launcher.cjs && electron-builder --win dir --x64 --publish never",
+    "dist": "npm run build && node scripts/build-launcher.cjs && electron-builder --win nsis --x64 --publish never",
     "dist:local": "npm run dist && powershell -NoProfile -ExecutionPolicy Bypass -File install-local.ps1 -Launch"
   },
   "devDependencies": {
@@ -34,6 +34,7 @@
     "markdown-it": "15.0.3"
   },
   "build": {
+    "afterSign": "scripts/after-sign.cjs",
     "appId": "io.ai-v5.llmmarkup",
     "productName": "LLMMarkUp",
     "asar": true,
@@ -59,8 +60,11 @@
     },
     "nsis": {
       "include": "installer.nsh",
+      "script": "scripts/installer.nsi",
       "oneClick": false,
       "perMachine": false,
+      "allowElevation": false,
+      "packElevateHelper": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "deleteAppDataOnUninstall": false,
@@ -70,6 +74,12 @@
       "guid": "7cc4e431-bb58-5499-952a-e3ae1c4abe51",
       "license": "LICENSE"
     },
+    "extraFiles": [
+      {
+        "from": "outputs/launcher-build/llmmarkup-launcher.exe",
+        "to": "llmmarkup-launcher.exe"
+      }
+    ],
     "extraResources": [
       {
         "from": "LICENSE",
