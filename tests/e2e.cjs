@@ -48,6 +48,7 @@ f(x)=\begin{cases}x^2 & x\ge0\\-x & x<0\end{cases}
   await fs.writeFile(path.join(folder, '公式示例.md'), mathSource);
   const env = { ...process.env, LLMMARKUP_TEST_DATA: path.join(root, 'profile') };
   delete env.ELECTRON_RUN_AS_NODE;
+  delete env.LLMMARKUP_TEST_LEGACY_SESSION;
   application = await electron.launch({
     ...(process.env.LLMMARKUP_TEST_EXE ? { executablePath: process.env.LLMMARKUP_TEST_EXE, args: [] } : { args: [path.resolve(__dirname, '..')] }), env
   });
@@ -254,7 +255,7 @@ test('open files by startup, picker, drop and a second instance without losing d
   await fs.writeFile(external, '# 外部文件\n'); await fs.writeFile(later, '# 稍后打开\n');
   await fs.writeFile(extra, '# 额外文件\n');
   await fs.writeFile(invalid, 'not Markdown');
-  const env = { ...process.env, LLMMARKUP_TEST_DATA: path.join(root, 'profile') }; delete env.ELECTRON_RUN_AS_NODE;
+  const env = { ...process.env, LLMMARKUP_TEST_DATA: path.join(root, 'profile') }; delete env.ELECTRON_RUN_AS_NODE; delete env.LLMMARKUP_TEST_LEGACY_SESSION;
   const appDirectory = path.resolve(__dirname, '..');
   const executable = process.env.LLMMARKUP_TEST_EXE || require('electron');
   const args = file => process.env.LLMMARKUP_TEST_EXE ? [file] : [appDirectory, file];
@@ -360,7 +361,7 @@ test('context actions, compact sidebar, independent pinch zoom and enhanced Mark
     '合成段落。\n\n'.repeat(25) + '[^a]: 合成脚注\n';
   await fs.writeFile(path.join(folder, 'main.md'), source);
   const profile = path.join(root, 'profile');
-  const env = { ...process.env, LLMMARKUP_TEST_DATA: profile }; delete env.ELECTRON_RUN_AS_NODE;
+  const env = { ...process.env, LLMMARKUP_TEST_DATA: profile }; delete env.ELECTRON_RUN_AS_NODE; delete env.LLMMARKUP_TEST_LEGACY_SESSION;
   const launch = () => electron.launch({
     ...(process.env.LLMMARKUP_TEST_EXE ? { executablePath: process.env.LLMMARKUP_TEST_EXE, args: [] } : { args: [path.resolve(__dirname, '..')] }), env
   });
@@ -490,7 +491,7 @@ test('rename keeps background drafts, undo, recent history and tabs; copy path a
   await fs.writeFile(path.join(profile, 'studio-session.json'), JSON.stringify({ version: 1, folder: canonical,
     tabs: ['章节/旧名.md', 'other.md'], activeId: '章节/旧名.md',
     recentFiles: [{ folder: canonical, id: '章节/旧名.md' }] }));
-  const env = { ...process.env, LLMMARKUP_TEST_DATA: profile }; delete env.ELECTRON_RUN_AS_NODE;
+  const env = { ...process.env, LLMMARKUP_TEST_DATA: profile }; delete env.ELECTRON_RUN_AS_NODE; delete env.LLMMARKUP_TEST_LEGACY_SESSION;
   const launch = () => electron.launch({
     ...(process.env.LLMMARKUP_TEST_EXE ? { executablePath: process.env.LLMMARKUP_TEST_EXE, args: [] } : { args: [path.resolve(__dirname, '..')] }), env
   });

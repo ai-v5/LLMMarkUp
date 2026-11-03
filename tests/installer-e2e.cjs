@@ -50,7 +50,9 @@ function fixture(t, rootName = 'install') {
   return { base, root, temp };
 }
 function run(file, args, fx, temp = fx.temp, extra = {}) {
-  const env = { ...process.env, LLMMARKUP_TEST_DATA: fx.base, TEMP: temp, TMP: temp, TMPDIR: temp, ...extra };
+  const env = { ...process.env, LLMMARKUP_TEST_DATA: fx.base, TEMP: temp, TMP: temp, TMPDIR: temp };
+  for (const name of ['LLMMARKUP_TEST_LEGACY_SESSION', 'LLMMARKUP_LOCAL_SMOKE_PROFILE', 'LLMMARKUP_LOCAL_TEST_OUTPUT', 'LLMMARKUP_INSTALL_TEST_PAUSE', 'LLMMARKUP_MIGRATION_TEST_PAUSE', 'LLMMARKUP_MIGRATION_TEST_FAIL', 'LLMMARKUP_UNINSTALL_TEST_PAUSE']) delete env[name];
+  Object.assign(env, extra);
   delete env.ELECTRON_RUN_AS_NODE;
   return spawnSync(file, args, { env, encoding: 'utf8', windowsHide: true, timeout: 180000 });
 }
@@ -166,15 +168,31 @@ test('installed launcher opens the real app, edits and saves a synthetic documen
   }
   const versions = path.join(fx.root, '.llmmarkup-versions');
   const runtime = path.join(versions, fs.readdirSync(versions)[0]);
-  const checkEnv = { ...process.env, SYNTHETIC_APP_EXE: path.join(runtime, 'LLMMarkUp.exe') };
-  let running = true;
-  for (let i = 0; i < 60 && running; i++) {
-    const check = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-Command',
-      "$p=@(Get-CimInstance Win32_Process -Filter \"Name = 'LLMMarkUp.exe'\" | Where-Object { $_.ExecutablePath -eq $env:SYNTHETIC_APP_EXE }); if ($p.Count -eq 0) { exit 0 } else { exit 2 }"], { env: checkEnv, windowsHide: true });
-    running = check.status !== 0;
-    if (running) await new Promise(resolve => setTimeout(resolve, 250));
+  const checkEnv = { ...process.env, LLMMARKUP_TEST_DATA: fx.base, TEMP: fx.temp, TMP: fx.temp, TMPDIR: fx.temp, SYNTHETIC_APP_EXE: path.join(runtime, 'LLMMarkUp.exe') };
+  delete checkEnv.LLMMARKUP_TEST_LEGACY_SESSION;
+  delete checkEnv.LLMMARKUP_LOCAL_SMOKE_PROFILE;
+  async function waitUntilClosed() {
+    let running = true;
+    for (let i = 0; i < 60 && running; i++) {
+      const check = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-Command',
+        "$p=@(Get-CimInstance Win32_Process -Filter \"Name = 'LLMMarkUp.exe'\" | Where-Object { $_.ExecutablePath -eq $env:SYNTHETIC_APP_EXE }); if ($p.Count -eq 0) { exit 0 } else { exit 2 }"], { env: checkEnv, windowsHide: true });
+      running = check.status !== 0;
+      if (running) await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    assert.equal(running, false, 'the synthetic app did not close normally');
   }
-  assert.equal(running, false, 'the synthetic app did not close normally');
+  await waitUntilClosed();
+  try {
+    const isolatedProfile = path.join(fx.base, `local-smoke-${crypto.randomUUID().replaceAll('-', '')}`);
+    fs.mkdirSync(isolatedProfile);
+    const localLaunch = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(project, 'tests', 'verify-local-launch.ps1'),
+      '-EntryPath', launcher, '-Runtime', runtime, '-Profile', isolatedProfile, '-InstallRoot', fx.root], { env: checkEnv, encoding: 'utf8', windowsHide: true, timeout: 45000 });
+    assert.equal(localLaunch.status, 0, localLaunch.stderr || localLaunch.stdout);
+  } finally {
+    spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-Command',
+      "$p=@(Get-CimInstance Win32_Process -Filter \"Name = 'LLMMarkUp.exe'\" | Where-Object { $_.ExecutablePath -eq $env:SYNTHETIC_APP_EXE }); foreach ($item in $p) { $proc=Get-Process -Id $item.ProcessId -ErrorAction SilentlyContinue; if ($proc -and $proc.MainWindowHandle -ne 0) { [void]$proc.CloseMainWindow() } }"], { env: checkEnv, windowsHide: true });
+  }
+  await waitUntilClosed();
   const uninstaller = path.join(fx.root, 'Uninstall LLMMarkUp.exe');
   const removed = run(uninstaller, ['/S'], fx);
   assert.equal(removed.status, 0, removed.stderr || removed.stdout);
@@ -224,3 +242,52 @@ test(`actual installer migrates a previous packaged application with ${uninstall
   assert.ok(fs.existsSync(path.join(backup, 'Uninstall LLMMarkUp.exe.gz')));
 });
 }
+
+test('local delivery migrates a synthetic previous install and reopens its real application', { skip: !available || !legacyApp || !legacyUninstaller, timeout: 300000 }, async t => {
+  const fx = fixture(t);
+  fs.mkdirSync(path.join(fx.root, 'resources'));
+  fs.copyFileSync(path.join(legacyApp, 'LLMMarkUp.exe'), path.join(fx.root, 'LLMMarkUp.exe'));
+  fs.copyFileSync(path.join(legacyApp, 'resources', 'app.asar'), path.join(fx.root, 'resources', 'app.asar'));
+  fs.copyFileSync(legacyUninstaller, path.join(fx.root, 'Uninstall LLMMarkUp.exe'));
+  const env = { ...process.env, LLMMARKUP_TEST_DATA: fx.base, TEMP: fx.temp, TMP: fx.temp, TMPDIR: fx.temp, LLMMARKUP_LOCAL_TEST_OUTPUT: path.dirname(installer) };
+  delete env.LLMMARKUP_TEST_LEGACY_SESSION;
+  delete env.LLMMARKUP_LOCAL_SMOKE_PROFILE;
+  for (const name of ['LLMMARKUP_INSTALL_TEST_PAUSE', 'LLMMARKUP_MIGRATION_TEST_PAUSE', 'LLMMARKUP_MIGRATION_TEST_FAIL', 'LLMMARKUP_UNINSTALL_TEST_PAUSE']) delete env[name];
+  const registered = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(project, 'tests', 'create-synthetic-registry.ps1'),
+    '-InstallRoot', fx.root, '-AppGuid', appGuid, '-Legacy'], { env, encoding: 'utf8', windowsHide: true });
+  assert.equal(registered.status, 0, registered.stderr || registered.stdout);
+  let runtime;
+  try {
+    const npmCli = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+    const command = process.env.LLMMARKUP_TEST_FULL_LOCAL ? process.execPath : powershell;
+    const args = process.env.LLMMARKUP_TEST_FULL_LOCAL
+      ? [npmCli, 'run', 'dist:local']
+      : ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(project, 'tests', 'run-local-delivery.ps1'), '-InstallRoot', fx.root];
+    if (process.env.LLMMARKUP_TEST_FULL_LOCAL) assert.ok(fs.existsSync(npmCli), 'npm CLI is unavailable');
+    const result = spawnSync(command, args, { env, encoding: 'utf8', windowsHide: true, timeout: 180000 });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const versions = path.join(fx.root, '.llmmarkup-versions');
+    const ids = fs.readdirSync(versions);
+    assert.equal(ids.length, 1);
+    runtime = path.join(versions, ids[0]);
+    const receipt = JSON.parse(fs.readFileSync(path.join(fx.base, 'local-install-receipt.json'), 'utf8'));
+    assert.equal(receipt.version, '0.7.1');
+    assert.equal(receipt.previousVersion, '0.7.0');
+    assert.equal(receipt.launched, true);
+    assert.equal(fs.readFileSync(path.join(fx.root, 'user-document.md'), 'utf8'), 'synthetic document');
+  } finally {
+    if (!runtime) {
+      const versions = path.join(fx.root, '.llmmarkup-versions');
+      if (fs.existsSync(versions)) {
+        const ids = fs.readdirSync(versions).filter(id => /^[0-9a-f-]{36}$/i.test(id));
+        if (ids.length === 1) runtime = path.join(versions, ids[0]);
+      }
+    }
+    if (runtime) {
+      const processEnv = { ...env, SYNTHETIC_APP_EXE: path.join(runtime, 'LLMMarkUp.exe') };
+      spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-Command',
+        "$p=@(Get-CimInstance Win32_Process -Filter \"Name = 'LLMMarkUp.exe'\" | Where-Object { $_.ExecutablePath -eq $env:SYNTHETIC_APP_EXE }); foreach ($item in $p) { $proc=Get-Process -Id $item.ProcessId -ErrorAction SilentlyContinue; if ($proc -and $proc.MainWindowHandle -ne 0) { [void]$proc.CloseMainWindow() } }"], { env: processEnv, windowsHide: true });
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+});

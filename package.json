@@ -13,7 +13,7 @@
     "test:e2e": "npm run build && node --test tests/e2e.cjs",
     "pack": "npm run build && node scripts/build-launcher.cjs && electron-builder --win dir --x64 --publish never",
     "dist": "npm run build && node scripts/build-launcher.cjs && electron-builder --win nsis --x64 --publish never",
-    "dist:local": "npm run dist && powershell -NoProfile -ExecutionPolicy Bypass -File install-local.ps1 -Launch"
+    "dist:local": "node scripts/dist-local.cjs"
   },
   "devDependencies": {
     "@codemirror/commands": "6.11.1",
