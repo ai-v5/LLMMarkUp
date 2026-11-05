@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session, shell } = require('electron');
+const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, session, shell } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { pathToFileURL } = require('node:url');
@@ -61,7 +61,10 @@ function handle(channel, action) {
 
 if (hasLock) app.whenReady().then(async () => {
   await settings.load(legacySession);
-  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  nativeTheme.themeSource = settings.state.editorTheme;
+  session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
+    callback(permission === 'fullscreen' && contents === window?.webContents && details.isMainFrame && details.requestingUrl === page);
+  });
   // Only bundled UI and KaTeX font resources; documents cannot read arbitrary files or use the network.
   session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
     callback({ cancel: !assets.has(details.url) });
@@ -80,6 +83,9 @@ if (hasLock) app.whenReady().then(async () => {
   });
   ipcMain.on('window:close', async event => {
     if (trusted(event) && !busy) { await settings.flush().catch(() => {}); allowClose = true; window.close(); }
+  });
+  ipcMain.on('window:theme', (event, mode) => {
+    if (trusted(event) && (mode === 'light' || mode === 'dark')) nativeTheme.themeSource = mode;
   });
   ipcMain.on('session:update', (event, value) => {
     if (!trusted(event) || !value || typeof value !== 'object') return;

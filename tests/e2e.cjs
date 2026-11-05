@@ -92,10 +92,12 @@ f(x)=\begin{cases}x^2 & x\ge0\\-x & x<0\end{cases}
   assert.ok((await page.locator('#editor-pane').boundingBox()).width < beforeEditor.width - 30);
   await page.locator('#editor-dark').click();
   await expect(page.locator('#editor-pane')).toHaveAttribute('data-theme', 'dark');
+  await expect.poll(() => application.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe('dark');
   await expect(page.locator('.workspace')).toHaveAttribute('data-theme', 'dark');
   await expect(page.locator('.sidebar')).toHaveCSS('background-color', 'rgb(32, 36, 44)');
   await expect(page.locator('#preview-pane')).toHaveAttribute('data-theme', 'light');
   await page.locator('#preview-dark').click(); await page.locator('#editor-light').click();
+  await expect.poll(() => application.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe('light');
   await expect(page.locator('.sidebar')).toHaveCSS('background-color', 'rgb(246, 248, 252)');
   await expect(page.locator('#preview-pane')).toHaveAttribute('data-theme', 'dark');
   const headingHeight = (await page.locator('#preview h1').boundingBox()).height;
@@ -188,7 +190,7 @@ f(x)=\begin{cases}x^2 & x\ge0\\-x & x<0\end{cases}
   await page.mouse.move(narrow.x + 2, narrow.y + 50); await page.mouse.down();
   await page.mouse.move(700, narrow.y + 50, { steps: 8 }); await page.mouse.up();
   await page.locator('#preview-scale').selectOption('0.5');
-  for (const id of ['preview-dark', 'preview-scale', 'sync-scroll']) await expect(page.locator(`#${id}`)).toBeInViewport();
+  for (const id of ['preview-dark', 'preview-scale', 'preview-play', 'sync-scroll']) await expect(page.locator(`#${id}`)).toBeInViewport();
   assert.deepEqual(failedFonts, []);
   assert.deepEqual(errors, []);
   const closed = application.waitForEvent('close');
@@ -208,6 +210,7 @@ f(x)=\begin{cases}x^2 & x\ge0\\-x & x<0\end{cases}
   await expect(page.locator('#preview h1')).toHaveText('复杂公式 · 合成示例');
   await expect(page.getByRole('tab')).toHaveCount(persisted.tabs.length);
   await expect(page.locator('.sidebar')).toHaveCSS('background-color', 'rgb(32, 36, 44)');
+  await expect.poll(() => application.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe('dark');
   await expect(page.locator('#preview-pane')).toHaveAttribute('data-theme', 'dark');
   await expect(page.locator('#preview-scale')).toHaveValue('0.5');
   await page.keyboard.press('Control+w');
@@ -643,4 +646,105 @@ test('legacy desktop configuration restores in the renamed app without changing 
   await expect(page.locator('#preview-scale')).toHaveValue('0.75');
   assert.equal(await fs.readFile(legacyFile, 'utf8'), legacy);
   assert.equal(JSON.parse(await fs.readFile(path.join(profile, 'studio-session.json'), 'utf8')).activeId, '恢复.md');
+});
+
+test('presentation follows headings in both directions and preserves the draft', { timeout: 60000 }, async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'llmmarkup-presentation-e2e-'));
+  let application;
+  t.after(async () => {
+    if (application) {
+      await application.evaluate(({ BrowserWindow }) => {
+        for (const window of BrowserWindow.getAllWindows()) window.removeAllListeners('close');
+      }).catch(() => {});
+      await application.close();
+    }
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  const folder = path.join(root, '合成文档'); await fs.mkdir(folder);
+  const chapters = Array.from({ length: 30 }, (_, i) =>
+    `## 章节 ${i + 1}\n\n${'合成正文，用于测试滚动位置。'.repeat(35)}\n`).join('\n');
+  const source = `# 总览\n\n## 重复标题\n\n正文\n\n## 重复标题\n\n正文\n\n### 数学 $x^2$\n\n${chapters}`;
+  await fs.writeFile(path.join(folder, '演示.md'), source);
+  const env = { ...process.env, LLMMARKUP_TEST_DATA: path.join(root, 'profile') };
+  delete env.ELECTRON_RUN_AS_NODE;
+  application = await electron.launch({
+    ...(process.env.LLMMARKUP_TEST_EXE ? { executablePath: process.env.LLMMARKUP_TEST_EXE, args: [] } : { args: [path.resolve(__dirname, '..')] }), env
+  });
+  const page = await application.firstWindow();
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await application.evaluate(({ dialog }, value) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [value] }); }, folder);
+  await page.locator('#open-folder').click();
+  await page.getByRole('menuitem', { name: '打开文件夹…', exact: true }).click();
+  await page.getByRole('button', { name: 'M↓ 演示.md', exact: true }).click();
+  await expect(page.locator('#preview h1')).toHaveText('总览');
+  await page.locator('.cm-content').focus(); await page.keyboard.press('Control+End');
+  await page.keyboard.insertText('\n\n## 未保存章节\n\n草稿');
+  await expect(page.locator('#document-status')).toHaveAttribute('data-dirty', 'true');
+  await page.locator('#preview-dark').click(); await page.locator('#preview-scale').selectOption('0.8');
+  await page.locator('#preview-play').click();
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement?.id)).toBe('preview-pane');
+  await expect(page.locator('#presentation-outline')).toBeVisible();
+  await expect(page.locator('#preview-exit')).toBeVisible();
+  await expect(page.locator('#preview-play')).toBeHidden();
+  await expect(page.locator('#preview-pane')).toHaveAttribute('data-theme', 'dark');
+  await expect(page.locator('#preview-scale')).toHaveValue('0.8');
+  const fullBounds = await page.locator('#preview-pane').boundingBox();
+  const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+  assert.ok(Math.abs(fullBounds.width - viewport.width) < 1 && Math.abs(fullBounds.height - viewport.height) < 1);
+  const outline = page.locator('#outline-list');
+  await expect(outline.getByRole('button', { name: '数学 x^2', exact: true })).toHaveCount(1);
+  const repeated = outline.getByRole('button', { name: '重复标题', exact: true });
+  await expect(repeated).toHaveCount(2);
+  await repeated.nth(1).click();
+  await expect(repeated.nth(1)).toHaveAttribute('aria-current', 'location');
+  await repeated.nth(0).click();
+  await expect(repeated.nth(0)).toHaveAttribute('aria-current', 'location');
+  const last = outline.getByRole('button', { name: '未保存章节', exact: true });
+  await last.click();
+  await expect(last).toHaveAttribute('aria-current', 'location');
+  const targetOffset = await page.locator('#preview h2').last().evaluate(heading =>
+    heading.getBoundingClientRect().top - document.getElementById('preview-scroll').getBoundingClientRect().top);
+  assert.ok(Math.abs(targetOffset - 24) < 3);
+  assert.ok(await outline.evaluate(element => element.scrollTop) > 0);
+  await page.locator('#preview h2').filter({ hasText: '章节 3' }).first().evaluate(heading => {
+    const scroll = document.getElementById('preview-scroll');
+    scroll.scrollTop += heading.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 24;
+  });
+  await expect(outline.getByRole('button', { name: '章节 3', exact: true })).toHaveAttribute('aria-current', 'location');
+  await page.locator('#preview-scale').selectOption('1.25');
+  await last.click(); await expect(last).toHaveAttribute('aria-current', 'location');
+  await fs.mkdir(path.resolve('outputs/qa'), { recursive: true });
+  await page.screenshot({ path: path.resolve('outputs/qa/presentation-dark.png'), scale: 'css' });
+  await page.keyboard.press('Escape');
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBe(null);
+  await expect(page.locator('#presentation-outline')).toBeHidden();
+  await expect(page.locator('#document-status')).toHaveAttribute('data-dirty', 'true');
+  assert.equal(await fs.readFile(path.join(folder, '演示.md'), 'utf8'), source);
+  await page.locator('.cm-content').focus(); await page.keyboard.press('Control+a');
+  await page.keyboard.insertText('只有正文，没有章节标题。');
+  await page.locator('#preview-play').click();
+  await expect(outline).toContainText('文档中暂无标题');
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+  await expect(page.locator('#unsaved-dialog')).toBeVisible();
+  await page.locator('[data-choice="cancel"]').click();
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement?.id)).toBe('preview-pane');
+  await page.locator('#preview-exit').click();
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBe(null);
+  await expect(page.locator('.cm-content')).toContainText('只有正文，没有章节标题。');
+  await expect(page.locator('#document-status')).toHaveAttribute('data-dirty', 'true');
+  await page.locator('#preview-play').click();
+  await page.keyboard.press('Control+w');
+  await expect(page.locator('#unsaved-dialog')).toBeVisible();
+  await page.locator('[data-choice="discard"]').click();
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBe(null);
+  await expect(page.locator('#welcome')).toBeVisible();
+  await page.getByRole('button', { name: 'M↓ 演示.md', exact: true }).click();
+  await page.locator('#preview-play').click();
+  const otherFolder = path.join(root, '另一目录'); await fs.mkdir(otherFolder);
+  await application.evaluate(({ dialog }, value) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [value] }); }, otherFolder);
+  await page.keyboard.press('Control+Shift+o');
+  await expect(page.locator('#folder-name')).toHaveText('另一目录');
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBe(null);
+  await expect(page.locator('#welcome')).toBeVisible();
+  assert.deepEqual(errors, []);
 });

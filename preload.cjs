@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('studio', Object.freeze({
   recent: () => ipcRenderer.invoke('session:recent'),
   openRecent: (kind, index) => ipcRenderer.invoke('workspace:recent', kind, index),
   remember: state => ipcRenderer.send('session:update', state),
+  setWindowTheme: mode => ipcRenderer.send('window:theme', mode),
   onSessionError: callback => { ipcRenderer.on('session:error', () => callback()); },
   chooseFiles: () => ipcRenderer.invoke('files:choose'),
   prepareFiles: paths => ipcRenderer.invoke('files:prepare', paths),
