@@ -31,6 +31,10 @@ let trashResolve;
 let pendingExternal = true;
 let externalGeneration = 0;
 let drainingExternal = false;
+let outlineHeadings = [];
+let outlineItems = [];
+let activeOutline = -1;
+let outlineFrame = 0;
 
 const theme = EditorView.theme({
   '&': { height: '100%', fontSize: 'calc(14px * var(--editor-scale, 1))', color: 'var(--editor-ink)', backgroundColor: 'var(--surface)' },
@@ -129,6 +133,7 @@ async function action(callback) {
 }
 function renderPreview() {
   $('preview').innerHTML = renderMarkdown(view.state.doc.toString());
+  if (document.fullscreenElement === $('preview-pane')) renderOutline();
 }
 function stashDocument() {
   if (current) { current.state = view.state; current.scroll = view.scrollDOM.scrollTop; current.previewScroll = $('preview-scroll').scrollTop; }
@@ -185,7 +190,10 @@ async function removeDocument(id) {
   documents.delete(id);
   if (current === entry) {
     if (documents.size) { activateDocument([...documents.keys()][Math.min(index, documents.size - 1)]); await revealDirectory(selectedDirectory); }
-    else { current = null; view.setState(makeState('')); $('panes').hidden = true; $('welcome').hidden = false; markActive(); updateCursor(); }
+    else {
+      if (document.fullscreenElement === $('preview-pane')) await document.exitFullscreen();
+      current = null; view.setState(makeState('')); $('panes').hidden = true; $('welcome').hidden = false; markActive(); updateCursor();
+    }
   }
   updateStatus();
 }
@@ -279,6 +287,7 @@ async function revealDirectory(parent) {
   markActive();
 }
 async function changeWorkspace(selected) {
+  if (document.fullscreenElement === $('preview-pane')) await document.exitFullscreen();
   folder = selected;
   current = null; documents.clear();
   selectedDirectory = '';
@@ -569,7 +578,7 @@ window.addEventListener('focus', () => {
 });
 // The editor is the scroll source. Source-line anchors keep headings and code blocks aligned.
 function syncPreview() {
-  if (!$('sync-scroll').checked || !current) return;
+  if (!$('sync-scroll').checked || !current || document.fullscreenElement === $('preview-pane')) return;
   const block = view.lineBlockAtHeight(view.scrollDOM.scrollTop);
   const line = view.state.doc.lineAt(block.from).number - 1;
   const anchors = [...$('preview').querySelectorAll('[data-source-line]')];
@@ -585,6 +594,82 @@ function syncPreview() {
 }
 view.scrollDOM.addEventListener('scroll', syncPreview);
 $('sync-scroll').onchange = syncPreview;
+function updateOutlineActive() {
+  outlineFrame = 0;
+  if (document.fullscreenElement !== $('preview-pane') || !outlineHeadings.length) return;
+  const threshold = $('preview-scroll').getBoundingClientRect().top + 32;
+  let index = 0;
+  for (let i = 0; i < outlineHeadings.length; i++) {
+    if (outlineHeadings[i].getBoundingClientRect().top > threshold) break;
+    index = i;
+  }
+  if (index === activeOutline) return;
+  if (activeOutline >= 0) outlineItems[activeOutline].removeAttribute('aria-current');
+  activeOutline = index;
+  const item = outlineItems[index];
+  item.setAttribute('aria-current', 'location');
+  const list = $('outline-list');
+  const bounds = list.getBoundingClientRect();
+  const itemBounds = item.getBoundingClientRect();
+  if (itemBounds.top < bounds.top) list.scrollTop += itemBounds.top - bounds.top;
+  else if (itemBounds.bottom > bounds.bottom) list.scrollTop += itemBounds.bottom - bounds.bottom;
+}
+function scheduleOutlineUpdate() {
+  if (!outlineFrame) outlineFrame = requestAnimationFrame(updateOutlineActive);
+}
+function renderOutline() {
+  outlineHeadings = [...$('preview').querySelectorAll('h1, h2, h3, h4, h5, h6')];
+  outlineItems = [];
+  activeOutline = -1;
+  const list = $('outline-list');
+  list.replaceChildren();
+  if (!outlineHeadings.length) {
+    const empty = document.createElement('p'); empty.className = 'outline-empty'; empty.textContent = '文档中暂无标题';
+    list.append(empty);
+    return;
+  }
+  const minLevel = outlineHeadings.reduce((min, heading) => Math.min(min, Number(heading.tagName[1])), 6);
+  for (const heading of outlineHeadings) {
+    const text = heading.cloneNode(true);
+    for (const formula of text.querySelectorAll('.katex')) {
+      formula.replaceWith(document.createTextNode(formula.querySelector('annotation')?.textContent || formula.textContent));
+    }
+    text.querySelectorAll('.footnote-ref').forEach(reference => reference.remove());
+    const item = document.createElement('button'); item.className = 'outline-item';
+    item.textContent = text.textContent.replace(/\s+/g, ' ').trim() || '（无标题文字）';
+    item.style.setProperty('--outline-depth', String(Number(heading.tagName[1]) - minLevel));
+    item.onclick = () => {
+      const scroll = $('preview-scroll');
+      scroll.scrollTop += heading.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 24;
+      scheduleOutlineUpdate();
+    };
+    outlineItems.push(item); list.append(item);
+  }
+  scheduleOutlineUpdate();
+}
+$('preview-scroll').addEventListener('scroll', () => {
+  if (document.fullscreenElement === $('preview-pane')) scheduleOutlineUpdate();
+});
+$('preview-play').onclick = async () => {
+  if (!current || busy || modalOpen()) return;
+  clearTimeout(previewTimer); renderPreview();
+  try { await $('preview-pane').requestFullscreen(); }
+  catch { notice('无法进入全屏播放，请重试。', true); }
+};
+$('preview-exit').onclick = () => { if (document.fullscreenElement === $('preview-pane')) document.exitFullscreen(); };
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && document.fullscreenElement === $('preview-pane') && !modalOpen()) {
+    event.preventDefault(); document.exitFullscreen();
+  }
+});
+document.addEventListener('fullscreenchange', () => {
+  const playing = document.fullscreenElement === $('preview-pane');
+  $('presentation-outline').hidden = !playing;
+  $('preview-play').hidden = playing;
+  $('preview-exit').hidden = !playing;
+  if (playing) renderOutline();
+  else { outlineHeadings = []; outlineItems = []; activeOutline = -1; }
+});
 function setPanelScale(panel, value, offset = 0) {
   const next = Math.round(Math.max(0.5, Math.min(2, value)) * 1000) / 1000;
   if (panel === 'editor') {
@@ -599,6 +684,7 @@ function setPanelScale(panel, value, offset = 0) {
     }
     $('preview-scale').value = String(next); $('preview').style.zoom = String(next);
     const scroll = $('preview-scroll'); scroll.scrollTop = (scroll.scrollTop + offset) * next / old - offset;
+    if (document.fullscreenElement === $('preview-pane')) scheduleOutlineUpdate();
   }
 }
 $('editor-scale').onclick = () => { setPanelScale('editor', 1); rememberSession(); };
@@ -623,6 +709,7 @@ for (const panel of ['editor', 'preview']) {
       if (panel === 'editor') {
         document.querySelector('.workspace').dataset.theme = mode;
         editorDark = mode === 'dark';
+        api.setWindowTheme(mode);
         view.dispatch({ effects: appearance.reconfigure(editorDark ? oneDark : []) });
       }
       rememberSession();
@@ -651,7 +738,10 @@ for (const [id, adjust] of [['splitter', resize], ['sidebar-splitter', resizeSid
     adjust(splitter.getBoundingClientRect().left + (event.key === 'ArrowRight' ? 24 : -24));
   };
 }
-window.addEventListener('resize', () => resizeSidebar($('sidebar-splitter').getBoundingClientRect().left));
+window.addEventListener('resize', () => {
+  if (document.fullscreenElement !== $('preview-pane')) resizeSidebar($('sidebar-splitter').getBoundingClientRect().left);
+  else scheduleOutlineUpdate();
+});
 // Documents cannot navigate the privileged application page.
 $('preview').addEventListener('click', event => {
   const anchor = event.target.closest('a');
