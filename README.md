@@ -28,22 +28,36 @@
 
 ## 快速开始
 
-当前版本 **0.7.0**，面向 **Windows x64**。仓库尚未发布二进制 Release，请从源码构建。开发需要 Node.js 22.12+ 和 npm；安装后的应用不需要 Node.js 或 Python。
+### Windows 10 及以上 x64 安装
 
-```powershell
-git clone https://github.com/ai-v5/LLMMarkUp.git
-Set-Location LLMMarkUp
+下载 [LLMMarkUp 0.7.1 Windows 安装包](https://github.com/ai-v5/LLMMarkUp/releases/download/v0.7.1/LLMMarkUp-0.7.1-Setup.exe)，运行安装程序并按提示完成安装。安装后的应用不需要 Node.js 或 Python。也可以在 [GitHub Releases](https://github.com/ai-v5/LLMMarkUp/releases/latest) 查看版本与下载文件。
+
+安装包面向当前 Windows 用户。已注册的当前用户旧版可原位升级；如检测到旧版安装在“所有用户”范围内，安装程序会停止并保留原安装。
+
+升级或卸载前请先保存并退出所有版本，使用本版安装包升级；不要用旧版安装包覆盖新版。
+
+**安装包尚未进行代码签名**，Windows 可能显示未知发布者或 SmartScreen 提示。
+
+### macOS / Linux 从源码运行
+
+其他系统暂不提供安装包。可在图形桌面环境中尝试从源码运行，需要 Git、Node.js 22.12+、npm 及 Electron 所需的系统依赖。项目使用的 Electron 45 要求 macOS 13 或以上版本，参见 [Electron 平台支持说明](https://www.electronjs.org/docs/latest/breaking-changes)。当前版本仅在 Windows x64 验证；macOS 和 Linux 的运行与兼容性尚未验证。
+
+```sh
+git clone --branch v0.7.1 https://github.com/ai-v5/LLMMarkUp.git
+cd LLMMarkUp
 npm ci
 npm start
 ```
 
-生成本机安装包：
+### 从源码构建 Windows 安装包
+
+Windows 开发环境也可按上述步骤获取源码，再运行：
 
 ```powershell
 npm run dist
 ```
 
-产物为 `outputs/installers/LLMMarkUp-0.7.0-Setup.exe`。构建显式使用 `--publish never`，不会上传产物或创建 Release。**安装包尚未进行代码签名**，Windows 可能显示未知发布者或 SmartScreen 提示。
+产物为 `outputs/installers/LLMMarkUp-0.7.1-Setup.exe`。本地构建显式使用 `--publish never`，不会上传产物或创建 Release。
 
 开发者更新已有本机安装可执行 `npm run dist:local`。脚本核验安装归属，正常请求关闭，原位安装并校验版本和应用包 hash 后重新打开；如有未保存提示，需先处理，脚本不会强杀。首次安装默认使用当前用户 Programs 目录。指定位置可运行：
 
@@ -80,7 +94,7 @@ powershell -File install-local.ps1 -InstallDirectory '<目标目录>' -Launch
 - 文件操作有版本和冲突检查，但与不协作的外部程序之间仍有最终检查到文件系统操作的竞争窗口，不提供多写入者事务保证。避免同时用多个程序修改同一个文件。
 - 配置位于 Electron 标准 `userData/studio-session.json`，记录本机目录、最近文件与界面状态，不存储未保存正文。分享配置或截图前请检查路径信息。
 
-早期 MDPPT Studio 用户升级时，仅在新配置不存在时从既定旧文件迁移有效字段，保留原件，不覆盖已有新配置。安装身份沿用升级标识，界面、EXE、快捷方式及新安装目录使用 LLMMarkUp。
+早期 MDPPT Studio 用户升级时，仅在新配置不存在时从既定旧文件迁移有效字段，保留原件，不覆盖已有新配置。当前用户版原位升级保留旧快捷方式入口；卸载仅移除已核验的应用文件，保留额外文件、修改过的文件和压缩的旧版备份。
 
 ## 开发、测试与项目结构
 
@@ -108,7 +122,7 @@ Remove-Item Env:\LLMMARKUP_TEST_EXE
 | `build.mjs` / `install-local.ps1` | 离线资源打包、第三方通知与本机升级 |
 | `docs/` | GitHub Pages 静态项目网站；发布源为 `main:/docs` |
 
-本轮文档与网站更新复验基于 0.6.1：28 项单元测试、4 项开发窗口 E2E 和 4 项打包 EXE E2E 通过；2026-10-26 依赖在线审计为 0 项已知漏洞。打包 EXE 验证不等于安装升级验证；本轮未重新安装应用。物理触控板、真人输入法、多个 Windows 版本、代码签名及 SmartScreen 行为未在本轮验证。未来依赖风险需持续复核。
+安装与迁移验证使用隔离注册表和合成文件，发布说明列出实际执行的测试及其边界。macOS、Linux、物理触控板、真人输入法、多个 Windows 版本、代码签名及 SmartScreen 行为尚未验证。
 
 ## 开源许可与贡献
 
